@@ -107,7 +107,12 @@ export async function fetchWeatherData(city: City): Promise<WeatherData> {
         fetchNWSForecast(city.lat, city.lon),
       ]);
       if (current) {
-        if (city.unit==="F") { current.tempDisplay = cToF(current.tempC); current.unit="F"; }
+        if (city.unit==="F") {
+          current.tempDisplay = cToF(current.tempC);
+          current.unit="F";
+        } else {
+          current.tempDisplay = Math.round(current.tempC);
+        }
         if (forecast) {
           forecast.maxDisplay = city.unit==="F" ? cToF(forecast.maxC) : Math.round(forecast.maxC);
           forecast.minDisplay = city.unit==="F" ? cToF(forecast.minC) : Math.round(forecast.minC);
@@ -117,7 +122,14 @@ export async function fetchWeatherData(city: City): Promise<WeatherData> {
     } catch { /* fallthrough */ }
   }
   const data = await fetchOpenMeteo(city);
-  if (data.current && city.unit==="F") { data.current.tempDisplay = cToF(data.current.tempC); data.current.unit="F"; }
+  if (data.current) {
+    if (city.unit==="F") {
+      data.current.tempDisplay = cToF(data.current.tempC);
+      data.current.unit="F";
+    } else {
+      data.current.tempDisplay = Math.round(data.current.tempC);
+    }
+  }
   if (data.forecast) {
     data.forecast.maxDisplay = city.unit==="F" ? cToF(data.forecast.maxC) : Math.round(data.forecast.maxC);
     data.forecast.minDisplay = city.unit==="F" ? cToF(data.forecast.minC) : Math.round(data.forecast.minC);
