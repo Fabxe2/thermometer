@@ -19,19 +19,29 @@ function toDisplay(tempC: number, unit: "F"|"C"): number {
   return unit === "F" ? cToF(tempC) : Math.round(tempC * 10) / 10;
 }
 
-function tsToLocalHour(isoTime: string, timezone: string): number | null {
+// Returns {hour, dateStr} for a timestamp in the city timezone
+// Handles UTC-offset stamps AND local (no-offset) Open-Meteo stamps
+function tsToLocalInfo(isoTime: string, timezone: string): { hour: number; dateStr: string } | null {
   const hasOffset = /Z$|[+-]\d{2}:\d{2}$/.test(isoTime);
   if (hasOffset) {
     const d = new Date(isoTime);
     if (isNaN(d.getTime())) return null;
-    const s = d.toLocaleString("en-US", { timeZone: timezone, hour12: false, hour: "2-digit", minute: "2-digit" });
-    const m = s.match(/(\d{1,2}):(\d{2})$/);
-    if (!m) return null;
-    const h = parseInt(m[1], 10);
-    return h >= 24 ? 0 : h;
+    const s = d.toLocaleString("en-US", {
+      timeZone: timezone, hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit"
+    });
+    // "MM/DD/YYYY, HH:MM"
+    const dm = s.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+    const tm = s.match(/(\d{1,2}):(\d{2})$/);
+    if (!dm || !tm) return null;
+    let h = parseInt(tm[1], 10);
+    if (h >= 24) h = 0;
+    return { hour: h, dateStr: `${dm[3]}-${dm[1]}-${dm[2]}` };
   } else {
-    const m = isoTime.match(/T(\d{2}):/);
-    return m ? parseInt(m[1], 10) : null;
+    const dm = isoTime.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})/);
+    if (!dm) return null;
+    return { hour: parseInt(dm[2], 10), dateStr: dm[1] };
   }
 }
 
@@ -50,24 +60,26 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
   const forecast = weatherData.forecast;
   const time     = getLocalTime(safeCity.timezone, safeCity.tzAbbr);
 
-  // observed map: real NWS/tgftp observations (solid bright line)
+  // Today's date in the city's local timezone
+  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: safeCity.timezone });
+
+  // OBS map: only observations from TODAY in city timezone (solid bright line)
   const obsMap = new Map<number, number>();
   for (const pt of weatherData.obsHourly) {
-    const h = tsToLocalHour(pt.time, safeCity.timezone);
-    if (h === null) continue;
-    if (!obsMap.has(h)) obsMap.set(h, toDisplay(pt.tempC, unit));
+    const info = tsToLocalInfo(pt.time, safeCity.timezone);
+    if (!info || info.dateStr !== todayStr) continue; // skip other days
+    if (!obsMap.has(info.hour)) obsMap.set(info.hour, toDisplay(pt.tempC, unit));
   }
 
-  // forecast map: Open-Meteo / NWS hourly forecast for full day (dashed line)
+  // FORECAST map: today's forecast (dashed full-day line)
   const fcastMap = new Map<number, number>();
   for (const pt of weatherData.forecastHourly) {
-    const h = tsToLocalHour(pt.time, safeCity.timezone);
-    if (h === null) continue;
-    if (!fcastMap.has(h)) fcastMap.set(h, toDisplay(pt.tempC, unit));
+    const info = tsToLocalInfo(pt.time, safeCity.timezone);
+    if (!info || info.dateStr !== todayStr) continue;
+    if (!fcastMap.has(info.hour)) fcastMap.set(info.hour, toDisplay(pt.tempC, unit));
   }
 
   // Build 24-point array
-  // observed = real obs only (solid), forecast = full day prediction (dashed)
   const chartData: ChartPoint[] = Array.from({ length: 24 }, (_, h) => {
     const point: ChartPoint = { hour: h };
     if (obsMap.has(h))   point.observed = obsMap.get(h);
