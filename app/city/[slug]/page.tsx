@@ -12,7 +12,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const { slug } = await params;
   const city = getCityBySlug(slug);
   if (!city) return {};
-  return { title: `${city.name} – thermometer` };
+  return { title: `${city.name} â thermometer` };
 }
 
 function toDisplay(tempC: number, unit: "F"|"C"): number {
@@ -56,7 +56,7 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
   const time     = getLocalTime(safeCity.timezone, safeCity.tzAbbr);
   const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: safeCity.timezone });
 
-  // forecastHourly = all 24h of today → dashed line (always present all day)
+  // forecastHourly = all 24h of today â dashed line (always present all day)
   const fcastMap = new Map<number, number>();
   for (const pt of weatherData.forecastHourly) {
     const info = tsToLocalInfo(pt.time, safeCity.timezone);
@@ -64,7 +64,7 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
     if (!fcastMap.has(info.hour)) fcastMap.set(info.hour, toDisplay(pt.tempC, unit));
   }
 
-  // obsHourly = past hours → solid line (overlays dashed for past hours)
+  // obsHourly = past hours â solid line (overlays dashed for past hours)
   const obsMap = new Map<number, number>();
   for (const pt of weatherData.obsHourly) {
     const info = tsToLocalInfo(pt.time, safeCity.timezone);
@@ -73,15 +73,11 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
   }
 
   // Build chart: BOTH forecast and observed use the forecast value for past hours
-  // This ensures both lines share exact same Y coords → solid overlays dashed perfectly
+  // This ensures both lines share exact same Y coords â solid overlays dashed perfectly
   const chartData: ChartPoint[] = Array.from({ length: 24 }, (_, h) => {
     const point: ChartPoint = { hour: h };
     if (fcastMap.has(h)) point.forecast = fcastMap.get(h);  // always set if data exists
-    if (obsMap.has(h)) {
-      // Use forecast value for solid line (same source) so they perfectly overlay
-      // Falls back to obs value if forecast not available (NWS cities)
-      point.observed = fcastMap.get(h) ?? obsMap.get(h);
-    }
+    if (obsMap.has(h)) point.observed = obsMap.get(h);
     return point;
   });
 
@@ -98,8 +94,8 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
     : null;
 
   function labelWithUnit(label: string): string {
-    if (!label || label.includes('°F') || label.includes('°C')) return label;
-    if (label.includes('°')) return label.replace('°', `°${unit}`);
+    if (!label || label.includes('Â°F') || label.includes('Â°C')) return label;
+    if (label.includes('Â°')) return label.replace('Â°', `Â°${unit}`);
     return label;
   }
 
@@ -109,7 +105,7 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
 
   return (
     <main style={{ maxWidth:960, margin:"0 auto", padding:"32px 24px", minHeight:"100vh" }}>
-      <Link href="/" style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.1em", color:"var(--color-text-tertiary)", textDecoration:"none" }}>← All Cities</Link>
+      <Link href="/" style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.1em", color:"var(--color-text-tertiary)", textDecoration:"none" }}>â All Cities</Link>
 
       <header style={{ marginTop:24, marginBottom:32, paddingBottom:24, borderBottom:"1px solid var(--color-rule)" }}>
         <div style={{ display:"flex", alignItems:"baseline", gap:12, marginBottom:4 }}>
@@ -118,15 +114,15 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
           <span style={{ fontSize:13, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{time}</span>
         </div>
         <div style={{ fontFamily:"monospace", fontSize:"clamp(64px,9vw,88px)", lineHeight:1, fontWeight:300, color:"var(--color-data)", marginTop:12 }}>
-          {current ? current.tempDisplay : "—"}
-          <span style={{ fontSize:"clamp(28px,4vw,42px)", color:"var(--color-text-secondary)" }}>°{unit}</span>
+          {current ? current.tempDisplay : "â"}
+          <span style={{ fontSize:"clamp(28px,4vw,42px)", color:"var(--color-text-secondary)" }}>Â°{unit}</span>
         </div>
         {current && (
           <div style={{ display:"flex", alignItems:"center", gap:16, marginTop:6 }}>
             <span style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>observed at {current.observedAt}</span>
             {topBucket && (
               <span style={{ fontSize:12, fontFamily:"monospace", color:"var(--color-accent)", fontWeight:500 }}>
-                {labelWithUnit(topBucket.label)} {Math.round(topBucket.yesPrice * 100)}¢
+                {labelWithUnit(topBucket.label)} {Math.round(topBucket.yesPrice * 100)}Â¢
               </span>
             )}
           </div>
@@ -163,11 +159,11 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
         <div style={{ paddingTop:24, display:"flex", gap:32, borderTop:"1px solid var(--color-rule)", flexWrap:"wrap" }}>
           <div>
             <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", marginBottom:4 }}>Today High</div>
-            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"var(--color-data)" }}>{Math.round(forecast.maxDisplay)}°{unit}</div>
+            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"var(--color-data)" }}>{Math.round(forecast.maxDisplay)}Â°{unit}</div>
           </div>
           <div>
             <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", marginBottom:4 }}>Today Low</div>
-            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"var(--color-data)" }}>{Math.round(forecast.minDisplay)}°{unit}</div>
+            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"var(--color-data)" }}>{Math.round(forecast.minDisplay)}Â°{unit}</div>
           </div>
           {current?.rawMetar && (
             <div style={{ flex:1, minWidth:0 }}>
@@ -180,7 +176,7 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
       <div style={{ marginTop:32 }}>
         <a href={wunderUrl} target="_blank" rel="noopener noreferrer"
           style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)", textDecoration:"none" }}>
-          history on wunderground ↗
+          history on wunderground â
         </a>
       </div>
     </main>
