@@ -19,12 +19,15 @@ function toDisplay(tempC: number, unit: "F"|"C"): number {
   return unit === "F" ? cToF(tempC) : Math.round(tempC * 10) / 10;
 }
 
-// Parse local timestamp (no UTC offset) "2026-03-14T09:59:00" or "2026-03-14T09:00:00"
-// Returns { hour, dateStr }
-function localTsToInfo(isoTime: string): { hour: number; dateStr: string } | null {
-  const m = isoTime.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):/);
-  if (!m) return null;
-  return { dateStr: m[1], hour: parseInt(m[2], 10) };
+// Extract hour from "2026-03-14T09:59:00" or "2026-03-15T00:00:00"
+function extractHour(isoTime: string): number {
+  const m = isoTime.match(/T(\d{2}):/);
+  return m ? parseInt(m[1], 10) : -1;
+}
+
+// Extract date from "2026-03-14T09:59:00"
+function extractDate(isoTime: string): string {
+  return isoTime.substring(0, 10);
 }
 
 export default async function CityPage({ params }: { params: Promise<{ slug: string }> }) {
@@ -43,35 +46,34 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
   const time = getLocalTime(safeCity.timezone, safeCity.tzAbbr);
   const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: safeCity.timezone });
 
-  // forecastHourly = all 24h WU forecast → dashed backdrop
-  // All timestamps are local (no UTC offset) after normalization in weather.ts
+  // FORECAST (dashed backdrop): WU gives next 24 hours from now, no date filter needed
+  // Just use the hour slot. This covers both "same-day" and "next-day midnight rollover" cases.
   const fcastMap = new Map<number, number>();
   for (const pt of weatherData.forecastHourly) {
-    const info = localTsToInfo(pt.time);
-    if (!info || info.dateStr !== todayStr) continue;
-    if (!fcastMap.has(info.hour)) fcastMap.set(info.hour, toDisplay(pt.tempC, unit));
+    const h = extractHour(pt.time);
+    if (h < 0) continue;
+    if (!fcastMap.has(h)) fcastMap.set(h, toDisplay(pt.tempC, unit));
   }
 
-  // obsHourly = PWS real observations (past hours) → solid white overlay
-  // Use ACTUAL PWS values, not forecast values
+  // OBS (solid overlay): PWS hourly history — ONLY today's date in city timezone
   const obsMap = new Map<number, number>();
   for (const pt of weatherData.obsHourly) {
-    const info = localTsToInfo(pt.time);
-    if (!info || info.dateStr !== todayStr) continue;
-    if (!obsMap.has(info.hour)) obsMap.set(info.hour, toDisplay(pt.tempC, unit));
+    const h = extractHour(pt.time);
+    const d = extractDate(pt.time);
+    if (h < 0 || d !== todayStr) continue;
+    if (!obsMap.has(h)) obsMap.set(h, toDisplay(pt.tempC, unit));
   }
 
   // Build 24-point chart array
-  // forecast = dashed backdrop for ALL 24h
-  // observed = solid overlay for PAST hours only (actual PWS values)
+  // Both use the same hour slot (0-23) so they overlay correctly on the chart
   const chartData: ChartPoint[] = Array.from({ length: 24 }, (_, h) => {
     const point: ChartPoint = { hour: h };
     if (fcastMap.has(h)) point.forecast = fcastMap.get(h);
-    if (obsMap.has(h))   point.observed = obsMap.get(h); // actual PWS value, distinct from forecast
+    if (obsMap.has(h))   point.observed = obsMap.get(h);
     return point;
   });
 
-  // Y axis from all values
+  // Y axis
   const allY = chartData.flatMap(d => [d.observed, d.forecast].filter((v): v is number => v != null));
   const yMin = allY.length ? Math.min(...allY) : 0;
   const yMax = allY.length ? Math.max(...allY) : 0;
