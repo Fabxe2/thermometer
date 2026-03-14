@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { getCityBySlug, getLocalTime, CITIES, cToF } from "@/lib/cities";
+import { getCityBySlug, getLocalTime, cToF } from "@/lib/cities";
 import { fetchWeatherData } from "@/lib/weather";
 import { fetchPolymarketData } from "@/lib/polymarket";
 import Sparkline, { ChartPoint } from "../../components/Sparkline";
@@ -12,32 +12,19 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const { slug } = await params;
   const city = getCityBySlug(slug);
   if (!city) return {};
-  return { title: `${city.name} â thermometer` };
+  return { title: `${city.name} – thermometer` };
 }
 
 function toDisplay(tempC: number, unit: "F"|"C"): number {
   return unit === "F" ? cToF(tempC) : Math.round(tempC * 10) / 10;
 }
 
-function tsToLocalInfo(isoTime: string, timezone: string): { hour: number; dateStr: string } | null {
-  const hasOffset = /Z$|[+-]\d{2}:\d{2}$/.test(isoTime);
-  if (hasOffset) {
-    const d = new Date(isoTime);
-    if (isNaN(d.getTime())) return null;
-    const s = d.toLocaleString("en-US", {
-      timeZone: timezone, hour12: false,
-      year: "numeric", month: "2-digit", day: "2-digit",
-      hour: "2-digit", minute: "2-digit"
-    });
-    const dm = s.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-    const tm = s.match(/(\d{1,2}):(\d{2})$/);
-    if (!dm || !tm) return null;
-    return { hour: parseInt(tm[1], 10) % 24, dateStr: `${dm[3]}-${dm[1]}-${dm[2]}` };
-  } else {
-    const dm = isoTime.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})/);
-    if (!dm) return null;
-    return { hour: parseInt(dm[2], 10), dateStr: dm[1] };
-  }
+// Parse local timestamp (no UTC offset) "2026-03-14T09:59:00" or "2026-03-14T09:00:00"
+// Returns { hour, dateStr }
+function localTsToInfo(isoTime: string): { hour: number; dateStr: string } | null {
+  const m = isoTime.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):/);
+  if (!m) return null;
+  return { dateStr: m[1], hour: parseInt(m[2], 10) };
 }
 
 export default async function CityPage({ params }: { params: Promise<{ slug: string }> }) {
@@ -49,42 +36,46 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
 
   const weatherData = await fetchWeatherData(safeCity);
   const tempDisplay = weatherData.current?.tempDisplay ?? 0;
-  const polyData    = await fetchPolymarketData(safeCity, tempDisplay);
+  const polyData = await fetchPolymarketData(safeCity, tempDisplay);
 
-  const current  = weatherData.current;
+  const current = weatherData.current;
   const forecast = weatherData.forecast;
-  const time     = getLocalTime(safeCity.timezone, safeCity.tzAbbr);
+  const time = getLocalTime(safeCity.timezone, safeCity.tzAbbr);
   const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: safeCity.timezone });
 
-  // forecastHourly = all 24h of today â dashed line (always present all day)
+  // forecastHourly = all 24h WU forecast → dashed backdrop
+  // All timestamps are local (no UTC offset) after normalization in weather.ts
   const fcastMap = new Map<number, number>();
   for (const pt of weatherData.forecastHourly) {
-    const info = tsToLocalInfo(pt.time, safeCity.timezone);
+    const info = localTsToInfo(pt.time);
     if (!info || info.dateStr !== todayStr) continue;
     if (!fcastMap.has(info.hour)) fcastMap.set(info.hour, toDisplay(pt.tempC, unit));
   }
 
-  // obsHourly = past hours â solid line (overlays dashed for past hours)
+  // obsHourly = PWS real observations (past hours) → solid white overlay
+  // Use ACTUAL PWS values, not forecast values
   const obsMap = new Map<number, number>();
   for (const pt of weatherData.obsHourly) {
-    const info = tsToLocalInfo(pt.time, safeCity.timezone);
+    const info = localTsToInfo(pt.time);
     if (!info || info.dateStr !== todayStr) continue;
     if (!obsMap.has(info.hour)) obsMap.set(info.hour, toDisplay(pt.tempC, unit));
   }
 
-  // Build chart: BOTH forecast and observed use the forecast value for past hours
-  // This ensures both lines share exact same Y coords â solid overlays dashed perfectly
+  // Build 24-point chart array
+  // forecast = dashed backdrop for ALL 24h
+  // observed = solid overlay for PAST hours only (actual PWS values)
   const chartData: ChartPoint[] = Array.from({ length: 24 }, (_, h) => {
     const point: ChartPoint = { hour: h };
-    if (fcastMap.has(h)) point.forecast = fcastMap.get(h);  // always set if data exists
-    if (obsMap.has(h)) point.observed = obsMap.get(h);
+    if (fcastMap.has(h)) point.forecast = fcastMap.get(h);
+    if (obsMap.has(h))   point.observed = obsMap.get(h); // actual PWS value, distinct from forecast
     return point;
   });
 
+  // Y axis from all values
   const allY = chartData.flatMap(d => [d.observed, d.forecast].filter((v): v is number => v != null));
   const yMin = allY.length ? Math.min(...allY) : 0;
   const yMax = allY.length ? Math.max(...allY) : 0;
-  const yStep  = Math.ceil((yMax - yMin) / 3 / 2) * 2 || 2;
+  const yStep = Math.ceil((yMax - yMin) / 3 / 2) * 2 || 2;
   const yStart = Math.floor(yMin / yStep) * yStep;
   const yTicks = Array.from({ length: 5 }, (_, i) => yStart + i * yStep)
     .filter(v => v >= yMin - yStep && v <= yMax + yStep).slice(0, 5);
@@ -94,8 +85,8 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
     : null;
 
   function labelWithUnit(label: string): string {
-    if (!label || label.includes('Â°F') || label.includes('Â°C')) return label;
-    if (label.includes('Â°')) return label.replace('Â°', `Â°${unit}`);
+    if (!label || label.includes('°F') || label.includes('°C')) return label;
+    if (label.includes('°')) return label.replace('°', `°${unit}`);
     return label;
   }
 
@@ -105,7 +96,7 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
 
   return (
     <main style={{ maxWidth:960, margin:"0 auto", padding:"32px 24px", minHeight:"100vh" }}>
-      <Link href="/" style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.1em", color:"var(--color-text-tertiary)", textDecoration:"none" }}>â All Cities</Link>
+      <Link href="/" style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.1em", color:"var(--color-text-tertiary)", textDecoration:"none" }}>← All Cities</Link>
 
       <header style={{ marginTop:24, marginBottom:32, paddingBottom:24, borderBottom:"1px solid var(--color-rule)" }}>
         <div style={{ display:"flex", alignItems:"baseline", gap:12, marginBottom:4 }}>
@@ -114,15 +105,15 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
           <span style={{ fontSize:13, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{time}</span>
         </div>
         <div style={{ fontFamily:"monospace", fontSize:"clamp(64px,9vw,88px)", lineHeight:1, fontWeight:300, color:"var(--color-data)", marginTop:12 }}>
-          {current ? current.tempDisplay : "â"}
-          <span style={{ fontSize:"clamp(28px,4vw,42px)", color:"var(--color-text-secondary)" }}>Â°{unit}</span>
+          {current ? current.tempDisplay : "—"}
+          <span style={{ fontSize:"clamp(28px,4vw,42px)", color:"var(--color-text-secondary)" }}>°{unit}</span>
         </div>
         {current && (
           <div style={{ display:"flex", alignItems:"center", gap:16, marginTop:6 }}>
             <span style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>observed at {current.observedAt}</span>
             {topBucket && (
               <span style={{ fontSize:12, fontFamily:"monospace", color:"var(--color-accent)", fontWeight:500 }}>
-                {labelWithUnit(topBucket.label)} {Math.round(topBucket.yesPrice * 100)}Â¢
+                {labelWithUnit(topBucket.label)} {Math.round(topBucket.yesPrice * 100)}¢
               </span>
             )}
           </div>
@@ -159,11 +150,11 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
         <div style={{ paddingTop:24, display:"flex", gap:32, borderTop:"1px solid var(--color-rule)", flexWrap:"wrap" }}>
           <div>
             <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", marginBottom:4 }}>Today High</div>
-            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"var(--color-data)" }}>{Math.round(forecast.maxDisplay)}Â°{unit}</div>
+            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"var(--color-data)" }}>{Math.round(forecast.maxDisplay)}°{unit}</div>
           </div>
           <div>
             <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", marginBottom:4 }}>Today Low</div>
-            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"var(--color-data)" }}>{Math.round(forecast.minDisplay)}Â°{unit}</div>
+            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"var(--color-data)" }}>{Math.round(forecast.minDisplay)}°{unit}</div>
           </div>
           {current?.rawMetar && (
             <div style={{ flex:1, minWidth:0 }}>
@@ -176,7 +167,7 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
       <div style={{ marginTop:32 }}>
         <a href={wunderUrl} target="_blank" rel="noopener noreferrer"
           style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)", textDecoration:"none" }}>
-          history on wunderground â
+          history on wunderground ↗
         </a>
       </div>
     </main>
