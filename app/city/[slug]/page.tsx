@@ -3,7 +3,7 @@ import Link from "next/link";
 import { getCityBySlug, getLocalTime, CITIES, cToF } from "@/lib/cities";
 import { fetchWeatherData } from "@/lib/weather";
 import { fetchPolymarketData } from "@/lib/polymarket";
-import Sparkline from "../../components/Sparkline";
+import Sparkline, { ChartPoint } from "../../components/Sparkline";
 import MarketChart from "../../components/MarketChart";
 
 export const dynamic = "force-dynamic";
@@ -16,18 +16,24 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 }
 
 function toDisplay(tempC: number, unit: "F"|"C"): number {
-  return unit === "F" ? cToF(tempC) : Math.round(tempC);
+  return unit === "F" ? cToF(tempC) : Math.round(tempC * 10) / 10;
 }
 
-// Build 24h timeline from 12 AM today in city timezone
-function buildTimeline(timezone: string): string[] {
-  // Get today midnight in city timezone
-  const now = new Date();
-  const localMidnight = new Date(new Date(now.toLocaleDateString("en-US", { timeZone: timezone })).toLocaleString("en-US", { timeZone: timezone }));
-  return Array.from({ length: 24 }, (_, i) => {
-    const d = new Date(localMidnight.getTime() + i * 3600000);
-    return d.toISOString().substring(0, 13); // "2026-03-14T06"
+// Convert ISO timestamp to x position (0..1) within today in the city timezone
+function tsToX(isoTime: string, timezone: string): number | null {
+  const d = new Date(isoTime);
+  if (isNaN(d.getTime())) return null;
+  const parts = d.toLocaleString("en-US", {
+    timeZone: timezone, hour12: false,
+    hour: "2-digit", minute: "2-digit",
+    year: "numeric", month: "2-digit", day: "2-digit"
   });
+  // format: "MM/DD/YYYY, HH:MM"
+  const match = parts.match(/(\d+):(\d+)$/);
+  if (!match) return null;
+  const h = parseInt(match[1], 10);
+  const m = parseInt(match[2], 10);
+  return (h * 60 + m) / (24 * 60);
 }
 
 export default async function CityPage({ params }: { params: Promise<{ slug: string }> }) {
@@ -45,37 +51,35 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
   const forecast = weatherData.forecast;
   const time     = getLocalTime(safeCity.timezone, safeCity.tzAbbr);
 
-  // Build obs array: map obsHourly to display temps aligned to 24h timeline
-  // Use a map of hour -> temp for quick lookup
-  const obsMap = new Map<string, number>();
-  for (const pt of weatherData.obsHourly) {
-    const key = pt.time.substring(0, 13); // "2026-03-14T06"
-    obsMap.set(key, toDisplay(pt.tempC, unit));
-  }
+  // Obs points (solid line) — real hourly observations
+  const obsPoints: ChartPoint[] = weatherData.obsHourly
+    .map(pt => {
+      const x = tsToX(pt.time, safeCity.timezone);
+      if (x === null) return null;
+      return { x, y: toDisplay(pt.tempC, unit) };
+    })
+    .filter((p): p is ChartPoint => p !== null)
+    .sort((a, b) => a.x - b.x);
 
-  // Build forecast array: map forecastHourly to 24h
-  const fcastMap = new Map<string, number>();
-  for (const pt of weatherData.forecastHourly) {
-    const key = pt.time.substring(0, 13);
-    fcastMap.set(key, toDisplay(pt.tempC, unit));
-  }
+  // Forecast points (dashed line)
+  const fcastPoints: ChartPoint[] = weatherData.forecastHourly
+    .map(pt => {
+      const x = tsToX(pt.time, safeCity.timezone);
+      if (x === null) return null;
+      return { x, y: toDisplay(pt.tempC, unit) };
+    })
+    .filter((p): p is ChartPoint => p !== null)
+    .sort((a, b) => a.x - b.x);
 
-  const timeline = buildTimeline(safeCity.timezone);
-  // Only include hours that have at least forecast data
-  const obsArr    = timeline.map(h => obsMap.get(h) ?? NaN);
-  const fcastArr  = timeline.map(h => fcastMap.get(h) ?? NaN);
-
-  // Y axis values from all data
-  const allVals = [...obsArr, ...fcastArr].filter(v => !isNaN(v));
-  const yMin = allVals.length ? Math.min(...allVals) : 0;
-  const yMax = allVals.length ? Math.max(...allVals) : 0;
-  // Nice y ticks
-  const yStep  = Math.ceil((yMax - yMin) / 4 / 2) * 2 || 2;
+  // Y axis ticks
+  const allY = [...obsPoints, ...fcastPoints].map(p => p.y);
+  const yMin = allY.length ? Math.min(...allY) : 0;
+  const yMax = allY.length ? Math.max(...allY) : 0;
+  const yStep  = Math.ceil((yMax - yMin) / 3 / 2) * 2 || 2;
   const yStart = Math.floor(yMin / yStep) * yStep;
-  const yTicks = Array.from({ length: 5 }, (_, i) => yStart + i * yStep).filter(v => v >= yMin - yStep && v <= yMax + yStep).slice(0, 5);
-
-  // X axis labels every 3 hours: 12 AM, 3 AM, 6 AM...
-  const xLabels = ["12 AM","3 AM","6 AM","9 AM","12 PM","3 PM","6 PM","9 PM"];
+  const yTicks = Array.from({ length: 5 }, (_, i) => yStart + i * yStep)
+    .filter(v => v >= yMin - yStep && v <= yMax + yStep)
+    .slice(0, 5);
 
   const topBucket = polyData.buckets.length > 0
     ? polyData.buckets.reduce((a, b) => b.yesPrice > a.yesPrice ? b : a, polyData.buckets[0])
@@ -87,7 +91,8 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
     return label;
   }
 
-  const chartH = 200; // taller — like the original
+  const chartH = 180;
+  const xLabels = ["12 AM","3 AM","6 AM","9 AM","12 PM","3 PM","6 PM","9 PM"];
   const wunderUrl = `https://www.wunderground.com/history/daily/${safeCity.wundergroundSlug}`;
 
   return (
@@ -116,26 +121,20 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
         )}
       </header>
 
-      {/* Charts row — same proportions as original */}
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 48px", marginBottom:40 }}>
-
-        {/* Temperature chart */}
         <div>
           <h2 style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", fontWeight:400, marginBottom:12 }}>Temperature</h2>
           <div style={{ display:"flex", gap:8 }}>
-            {/* Y axis */}
-            <div style={{ display:"flex", flexDirection:"column", justifyContent:"space-between", minWidth:28, textAlign:"right", paddingBottom:18 }}>
+            <div style={{ display:"flex", flexDirection:"column", justifyContent:"space-between", minWidth:28, textAlign:"right", paddingBottom:20 }}>
               {[...yTicks].reverse().map(t => (
-                <span key={t} style={{ fontSize:10, fontFamily:"monospace", color:"var(--color-text-tertiary)", lineHeight:1 }}>{t}</span>
+                <span key={t} style={{ fontSize:10, fontFamily:"monospace", color:"var(--color-text-tertiary)", lineHeight:1 }}>{Math.round(t)}</span>
               ))}
             </div>
-            {/* Chart + X axis */}
             <div style={{ flex:1, minWidth:0 }}>
-              <div style={{ height:chartH, position:"relative" }}>
-                <Sparkline obs={obsArr} forecast={fcastArr} width={500} height={chartH} />
+              <div style={{ height:chartH }}>
+                <Sparkline obs={obsPoints} forecast={fcastPoints} height={chartH} />
               </div>
-              {/* X axis — every 3 hours */}
-              <div style={{ display:"flex", justifyContent:"space-between", marginTop:4 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginTop:6 }}>
                 {xLabels.map(l => (
                   <span key={l} style={{ fontSize:10, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{l}</span>
                 ))}
@@ -143,14 +142,11 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
             </div>
           </div>
         </div>
-
-        {/* Market chart */}
         <div>
           <MarketChart buckets={polyData.buckets} eventUrl={polyData.eventUrl} unit={unit} />
         </div>
       </div>
 
-      {/* High / Low / METAR */}
       {forecast && (
         <div style={{ paddingTop:24, display:"flex", gap:32, borderTop:"1px solid var(--color-rule)", flexWrap:"wrap" }}>
           <div>
@@ -171,7 +167,10 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
       )}
 
       <div style={{ marginTop:32 }}>
-        <a href={wunderUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)", textDecoration:"none" }}>history on wunderground ↗</a>
+        <a href={wunderUrl} target="_blank" rel="noopener noreferrer"
+          style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)", textDecoration:"none" }}>
+          history on wunderground ↗
+        </a>
       </div>
     </main>
   );
