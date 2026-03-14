@@ -19,11 +19,9 @@ function toDisplay(tempC: number, unit: "F"|"C"): number {
   return unit === "F" ? cToF(tempC) : Math.round(tempC * 10) / 10;
 }
 
-// Converts ISO timestamp to x position (0..1) in 24h day
-// Handles both UTC-offset stamps (NWS: "2026-03-14T04:51:00+00:00")
-// and local stamps (Open-Meteo: "2026-03-14T09:00")
-function tsToX(isoTime: string, timezone: string): number | null {
-  let h: number, m: number;
+// Extrae la hora local (0-23) de un timestamp ISO
+// Maneja tanto UTC+offset ("2026-03-14T04:51:00+00:00") como local ("2026-03-14T09:00")
+function tsToLocalHour(isoTime: string, timezone: string): number | null {
   const hasOffset = /Z$|[+-]\d{2}:\d{2}$/.test(isoTime);
   if (hasOffset) {
     const d = new Date(isoTime);
@@ -31,16 +29,15 @@ function tsToX(isoTime: string, timezone: string): number | null {
     const local = d.toLocaleString("en-US", {
       timeZone: timezone, hour12: false, hour: "2-digit", minute: "2-digit"
     });
-    const match = local.match(/(\d{1,2}):(\d{2})$/);
-    if (!match) return null;
-    h = parseInt(match[1], 10); m = parseInt(match[2], 10);
+    const m = local.match(/(\d{1,2}):(\d{2})$/);
+    if (!m) return null;
+    const h = parseInt(m[1], 10);
+    return h >= 24 ? 0 : h;
   } else {
-    const match = isoTime.match(/T(\d{2}):(\d{2})/);
-    if (!match) return null;
-    h = parseInt(match[1], 10); m = parseInt(match[2], 10);
+    const m = isoTime.match(/T(\d{2}):/);
+    if (!m) return null;
+    return parseInt(m[1], 10);
   }
-  if (h >= 24) h = 0;
-  return (h * 60 + m) / (24 * 60);
 }
 
 function getDateStr(isoTime: string, timezone: string): string {
@@ -65,39 +62,34 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
   const time     = getLocalTime(safeCity.timezone, safeCity.tzAbbr);
   const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: safeCity.timezone });
 
-  // HISTORY (dashed line) = tgftp cycle obs — all hourly readings for the day
-  // Dedup by hour slot, keep only today
-  const histMap = new Map<number, number>();
-  for (const pt of weatherData.obsHourly) {
-    const x = tsToX(pt.time, safeCity.timezone);
-    if (x === null) continue;
-    const slot = Math.round(x * 24);
-    if (!histMap.has(slot)) histMap.set(slot, toDisplay(pt.tempC, unit));
-  }
-  const historyPoints: ChartPoint[] = Array.from(histMap.entries())
-    .map(([slot, y]) => ({ x: slot / 24, y }))
-    .sort((a, b) => a.x - b.x);
+  // Construir array de 24 horas para el gráfico (índices 0-23)
+  // Cada entry: { hour, observed?, current? }
+  const chartMap = new Map<number, ChartPoint>();
+  for (let h = 0; h < 24; h++) chartMap.set(h, { hour: h });
 
-  // CURRENT POINT (solid short line) = just the current observed temperature
-  // Placed at the current time of day
-  const currentPoints: ChartPoint[] = [];
+  // Historia de observaciones → campo "observed" (línea punteada)
+  for (const pt of weatherData.obsHourly) {
+    const h = tsToLocalHour(pt.time, safeCity.timezone);
+    if (h === null) continue;
+    const entry = chartMap.get(h) ?? { hour: h };
+    entry.observed = toDisplay(pt.tempC, unit);
+    chartMap.set(h, entry);
+  }
+
+  // Temperatura actual → campo "current" solo en la hora actual (línea sólida)
   if (current) {
-    const x = tsToX(current.observedISO, safeCity.timezone);
-    if (x !== null) {
-      // Create a small 2-point segment around the current time (like the original)
-      const prevX = Math.max(0, x - 1/24);
-      // Find adjacent history point for smooth join
-      const nearbyHist = historyPoints.filter(p => Math.abs(p.x - x) < 2/24);
-      if (nearbyHist.length > 0) {
-        currentPoints.push(...nearbyHist);
-      }
-      currentPoints.push({ x, y: tempDisplay });
-      currentPoints.sort((a, b) => a.x - b.x);
+    const h = tsToLocalHour(current.observedISO, safeCity.timezone);
+    if (h !== null) {
+      const entry = chartMap.get(h) ?? { hour: h };
+      entry.current = tempDisplay;
+      chartMap.set(h, entry);
     }
   }
 
-  // Y axis from all data
-  const allY = [...historyPoints, ...currentPoints].map(p => p.y);
+  const chartData: ChartPoint[] = Array.from(chartMap.values()).sort((a, b) => a.hour - b.hour);
+
+  // Y axis ticks desde los datos del gráfico
+  const allY = chartData.flatMap(d => [d.observed, d.current].filter((v): v is number => v != null));
   const yMin = allY.length ? Math.min(...allY) : 0;
   const yMax = allY.length ? Math.max(...allY) : 0;
   const yStep  = Math.ceil((yMax - yMin) / 3 / 2) * 2 || 2;
@@ -149,15 +141,18 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
         <div>
           <h2 style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", fontWeight:400, marginBottom:12 }}>Temperature</h2>
           <div style={{ display:"flex", gap:8 }}>
+            {/* Y axis labels */}
             <div style={{ display:"flex", flexDirection:"column", justifyContent:"space-between", minWidth:28, textAlign:"right", paddingBottom:20 }}>
               {[...yTicks].reverse().map(t => (
                 <span key={t} style={{ fontSize:10, fontFamily:"monospace", color:"var(--color-text-tertiary)", lineHeight:1 }}>{Math.round(t)}</span>
               ))}
             </div>
+            {/* Chart */}
             <div style={{ flex:1, minWidth:0 }}>
               <div style={{ height:chartH }}>
-                <Sparkline history={historyPoints} current={currentPoints} height={chartH} />
+                <Sparkline data={chartData} height={chartH} />
               </div>
+              {/* X axis labels: 8 labels for 24h, one every 3 hours */}
               <div style={{ display:"flex", justifyContent:"space-between", marginTop:6 }}>
                 {xLabels.map(l => (
                   <span key={l} style={{ fontSize:10, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{l}</span>
