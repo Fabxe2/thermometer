@@ -3,7 +3,7 @@ import { CITIES, getLocalTime } from "@/lib/cities";
 import { fetchWeatherData } from "@/lib/weather";
 import { fetchPolymarketData } from "@/lib/polymarket";
 
-export const revalidate = 300;
+export const revalidate = 30; // revalida cada 30 segundos
 
 async function CityCard({ city }: { city: (typeof CITIES)[0] }) {
   const [weatherData, polyData] = await Promise.all([
@@ -12,10 +12,9 @@ async function CityCard({ city }: { city: (typeof CITIES)[0] }) {
   ]);
 
   const current  = weatherData.current;
-  const forecast = weatherData.forecast;
   const time     = getLocalTime(city.timezone, city.tzAbbr);
+  const forecast = weatherData.forecast;
 
-  // Top bucket = highest yesPrice
   const topBucket = polyData.buckets.length > 0
     ? polyData.buckets.reduce((a, b) => b.yesPrice > a.yesPrice ? b : a, polyData.buckets[0])
     : null;
@@ -31,7 +30,6 @@ async function CityCard({ city }: { city: (typeof CITIES)[0] }) {
           {current ? current.tempDisplay : "—"}
           <span style={{ fontSize:16, color:"var(--color-text-secondary)" }}>°{city.unit}</span>
         </div>
-        {/* Top bucket highlight — like the original */}
         {topBucket && (
           <div style={{ marginTop:6, display:"flex", alignItems:"center", gap:8 }}>
             <span style={{ fontSize:12, fontFamily:"monospace", color:"var(--color-accent)", fontWeight:500 }}>
