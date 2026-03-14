@@ -3,8 +3,8 @@ import Link from "next/link";
 import { getCityBySlug, getLocalTime, CITIES } from "@/lib/cities";
 import { fetchWeatherData } from "@/lib/weather";
 import { fetchPolymarketData } from "@/lib/polymarket";
-import Sparkline from "@/app/components/Sparkline";
-import MarketChart from "@/app/components/MarketChart";
+import Sparkline from "../../components/Sparkline";
+import MarketChart from "../../components/MarketChart";
 
 export const revalidate = 120;
 
