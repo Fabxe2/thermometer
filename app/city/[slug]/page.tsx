@@ -19,31 +19,21 @@ function toDisplay(tempC: number, unit: "F"|"C"): number {
   return unit === "F" ? cToF(tempC) : Math.round(tempC * 10) / 10;
 }
 
-// Extrae la hora local (0-23) de un timestamp ISO
-// Maneja tanto UTC+offset ("2026-03-14T04:51:00+00:00") como local ("2026-03-14T09:00")
+// Extrae hora local (0-23) de un ISO timestamp
 function tsToLocalHour(isoTime: string, timezone: string): number | null {
   const hasOffset = /Z$|[+-]\d{2}:\d{2}$/.test(isoTime);
   if (hasOffset) {
     const d = new Date(isoTime);
     if (isNaN(d.getTime())) return null;
-    const local = d.toLocaleString("en-US", {
-      timeZone: timezone, hour12: false, hour: "2-digit", minute: "2-digit"
-    });
-    const m = local.match(/(\d{1,2}):(\d{2})$/);
+    const s = d.toLocaleString("en-US", { timeZone: timezone, hour12: false, hour: "2-digit", minute: "2-digit" });
+    const m = s.match(/(\d{1,2}):(\d{2})$/);
     if (!m) return null;
     const h = parseInt(m[1], 10);
     return h >= 24 ? 0 : h;
   } else {
     const m = isoTime.match(/T(\d{2}):/);
-    if (!m) return null;
-    return parseInt(m[1], 10);
+    return m ? parseInt(m[1], 10) : null;
   }
-}
-
-function getDateStr(isoTime: string, timezone: string): string {
-  const hasOffset = /Z$|[+-]\d{2}:\d{2}$/.test(isoTime);
-  if (hasOffset) return new Date(isoTime).toLocaleDateString("en-CA", { timeZone: timezone });
-  return isoTime.substring(0, 10);
 }
 
 export default async function CityPage({ params }: { params: Promise<{ slug: string }> }) {
@@ -60,35 +50,47 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
   const current  = weatherData.current;
   const forecast = weatherData.forecast;
   const time     = getLocalTime(safeCity.timezone, safeCity.tzAbbr);
-  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: safeCity.timezone });
 
-  // Construir array de 24 horas para el gráfico (índices 0-23)
-  // Cada entry: { hour, observed?, current? }
-  const chartMap = new Map<number, ChartPoint>();
-  for (let h = 0; h < 24; h++) chartMap.set(h, { hour: h });
+  // Hora local actual en la ciudad
+  const nowLocalHour = tsToLocalHour(new Date().toISOString(), safeCity.timezone) ?? 0;
 
-  // Historia de observaciones → campo "observed" (línea punteada)
+  // Map hora → temp para observaciones (pasado)
+  const obsMap = new Map<number, number>();
   for (const pt of weatherData.obsHourly) {
     const h = tsToLocalHour(pt.time, safeCity.timezone);
     if (h === null) continue;
-    const entry = chartMap.get(h) ?? { hour: h };
-    entry.observed = toDisplay(pt.tempC, unit);
-    chartMap.set(h, entry);
+    // Solo tomar la lectura más reciente de cada hora
+    if (!obsMap.has(h)) obsMap.set(h, toDisplay(pt.tempC, unit));
   }
 
-  // Temperatura actual → campo "current" solo en la hora actual (línea sólida)
-  if (current) {
-    const h = tsToLocalHour(current.observedISO, safeCity.timezone);
-    if (h !== null) {
-      const entry = chartMap.get(h) ?? { hour: h };
-      entry.current = tempDisplay;
-      chartMap.set(h, entry);
+  // Map hora → temp para forecast (futuro)
+  const fcastMap = new Map<number, number>();
+  for (const pt of weatherData.forecastHourly) {
+    const h = tsToLocalHour(pt.time, safeCity.timezone);
+    if (h === null) continue;
+    if (!fcastMap.has(h)) fcastMap.set(h, toDisplay(pt.tempC, unit));
+  }
+
+  // Construir 24 puntos: obs para horas pasadas, forecast para horas futuras
+  // Todo va en el campo "observed" → UNA sola línea punteada continua
+  const chartData: ChartPoint[] = [];
+  for (let h = 0; h < 24; h++) {
+    const point: ChartPoint = { hour: h };
+    if (obsMap.has(h)) {
+      // Hora con observación real
+      point.observed = obsMap.get(h);
+    } else if (fcastMap.has(h)) {
+      // Hora sin obs → usar forecast
+      point.observed = fcastMap.get(h);
     }
+    // Punto actual: solo en la hora actual, temperatura real observada
+    if (h === nowLocalHour && current) {
+      point.current = tempDisplay;
+    }
+    chartData.push(point);
   }
 
-  const chartData: ChartPoint[] = Array.from(chartMap.values()).sort((a, b) => a.hour - b.hour);
-
-  // Y axis ticks desde los datos del gráfico
+  // Y axis ticks
   const allY = chartData.flatMap(d => [d.observed, d.current].filter((v): v is number => v != null));
   const yMin = allY.length ? Math.min(...allY) : 0;
   const yMax = allY.length ? Math.max(...allY) : 0;
@@ -141,18 +143,15 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
         <div>
           <h2 style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", fontWeight:400, marginBottom:12 }}>Temperature</h2>
           <div style={{ display:"flex", gap:8 }}>
-            {/* Y axis labels */}
             <div style={{ display:"flex", flexDirection:"column", justifyContent:"space-between", minWidth:28, textAlign:"right", paddingBottom:20 }}>
               {[...yTicks].reverse().map(t => (
                 <span key={t} style={{ fontSize:10, fontFamily:"monospace", color:"var(--color-text-tertiary)", lineHeight:1 }}>{Math.round(t)}</span>
               ))}
             </div>
-            {/* Chart */}
             <div style={{ flex:1, minWidth:0 }}>
               <div style={{ height:chartH }}>
                 <Sparkline data={chartData} height={chartH} />
               </div>
-              {/* X axis labels: 8 labels for 24h, one every 3 hours */}
               <div style={{ display:"flex", justifyContent:"space-between", marginTop:6 }}>
                 {xLabels.map(l => (
                   <span key={l} style={{ fontSize:10, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{l}</span>
