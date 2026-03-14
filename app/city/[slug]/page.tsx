@@ -19,7 +19,6 @@ function toDisplay(tempC: number, unit: "F"|"C"): number {
   return unit === "F" ? cToF(tempC) : Math.round(tempC * 10) / 10;
 }
 
-// Extrae hora local (0-23) de un ISO timestamp
 function tsToLocalHour(isoTime: string, timezone: string): number | null {
   const hasOffset = /Z$|[+-]\d{2}:\d{2}$/.test(isoTime);
   if (hasOffset) {
@@ -51,19 +50,15 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
   const forecast = weatherData.forecast;
   const time     = getLocalTime(safeCity.timezone, safeCity.tzAbbr);
 
-  // Hora local actual en la ciudad
-  const nowLocalHour = tsToLocalHour(new Date().toISOString(), safeCity.timezone) ?? 0;
-
-  // Map hora → temp para observaciones (pasado)
+  // observed map: real NWS/tgftp observations (solid bright line)
   const obsMap = new Map<number, number>();
   for (const pt of weatherData.obsHourly) {
     const h = tsToLocalHour(pt.time, safeCity.timezone);
     if (h === null) continue;
-    // Solo tomar la lectura más reciente de cada hora
     if (!obsMap.has(h)) obsMap.set(h, toDisplay(pt.tempC, unit));
   }
 
-  // Map hora → temp para forecast (futuro)
+  // forecast map: Open-Meteo / NWS hourly forecast for full day (dashed line)
   const fcastMap = new Map<number, number>();
   for (const pt of weatherData.forecastHourly) {
     const h = tsToLocalHour(pt.time, safeCity.timezone);
@@ -71,27 +66,17 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
     if (!fcastMap.has(h)) fcastMap.set(h, toDisplay(pt.tempC, unit));
   }
 
-  // Construir 24 puntos: obs para horas pasadas, forecast para horas futuras
-  // Todo va en el campo "observed" → UNA sola línea punteada continua
-  const chartData: ChartPoint[] = [];
-  for (let h = 0; h < 24; h++) {
+  // Build 24-point array
+  // observed = real obs only (solid), forecast = full day prediction (dashed)
+  const chartData: ChartPoint[] = Array.from({ length: 24 }, (_, h) => {
     const point: ChartPoint = { hour: h };
-    if (obsMap.has(h)) {
-      // Hora con observación real
-      point.observed = obsMap.get(h);
-    } else if (fcastMap.has(h)) {
-      // Hora sin obs → usar forecast
-      point.observed = fcastMap.get(h);
-    }
-    // Punto actual: solo en la hora actual, temperatura real observada
-    if (h === nowLocalHour && current) {
-      point.current = tempDisplay;
-    }
-    chartData.push(point);
-  }
+    if (obsMap.has(h))   point.observed = obsMap.get(h);
+    if (fcastMap.has(h)) point.forecast  = fcastMap.get(h);
+    return point;
+  });
 
-  // Y axis ticks
-  const allY = chartData.flatMap(d => [d.observed, d.current].filter((v): v is number => v != null));
+  // Y axis from all values
+  const allY = chartData.flatMap(d => [d.observed, d.forecast].filter((v): v is number => v != null));
   const yMin = allY.length ? Math.min(...allY) : 0;
   const yMax = allY.length ? Math.max(...allY) : 0;
   const yStep  = Math.ceil((yMax - yMin) / 3 / 2) * 2 || 2;
