@@ -8,25 +8,22 @@ async function CityCard({ city }: { city: (typeof CITIES)[0] }) {
   const data = await fetchWeatherData(city);
   const current = data.current;
   const forecast = data.forecast;
-  const tempStr = current ? `${current.tempDisplay}°${current.unit}` : "—";
   let rangeStr = "—";
-  if (forecast) rangeStr = `${Math.round(forecast.minDisplay)}-${Math.round(forecast.maxDisplay)}°${city.unit}`;
+  if (forecast) rangeStr = `${Math.round(forecast.minDisplay)}–${Math.round(forecast.maxDisplay)}°${city.unit}`;
   const time = getLocalTime(city.timezone, city.tzAbbr);
   return (
-    <Link href={`/city/${city.slug}`} className="group block">
-      <div className="py-4 border-b transition-colors" style={{ borderColor:"var(--color-rule)" }}>
-        <div className="flex items-baseline justify-between mb-1">
-          <span className="text-[13px] uppercase tracking-wide" style={{ color:"var(--color-text-secondary)" }}>{city.name}</span>
-          <span className="text-[11px] font-mono" style={{ color:"var(--color-text-tertiary)" }}>{time}</span>
+    <Link href={`/city/${city.slug}`} style={{ display:"block", textDecoration:"none", color:"inherit" }}>
+      <div style={{ padding:"16px 0", borderBottom:"1px solid var(--color-rule)" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:4 }}>
+          <span style={{ fontSize:13, textTransform:"uppercase", letterSpacing:"0.08em", color:"var(--color-text-secondary)" }}>{city.name}</span>
+          <span style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{time}</span>
         </div>
-        <div className="flex items-end gap-3">
-          <span className="font-mono text-[32px] leading-none font-light tracking-tight" style={{ color:"var(--color-data)" }}>
-            {current ? current.tempDisplay : "—"}
-            <span className="text-[16px]" style={{ color:"var(--color-text-secondary)" }}>°{city.unit}</span>
-          </span>
+        <div style={{ fontFamily:"monospace", fontSize:32, lineHeight:1, fontWeight:300, color:"var(--color-data)" }}>
+          {current ? current.tempDisplay : "—"}
+          <span style={{ fontSize:16, color:"var(--color-text-secondary)" }}>°{city.unit}</span>
         </div>
-        <div className="flex items-center justify-between mt-2">
-          <span className="text-[11px] font-mono" style={{ color:"var(--color-text-tertiary)" }}>{rangeStr}</span>
+        <div style={{ marginTop:8 }}>
+          <span style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{rangeStr}</span>
         </div>
       </div>
     </Link>
@@ -37,20 +34,20 @@ export default function Home() {
   const usCities = CITIES.filter(c => c.region === "us");
   const intlCities = CITIES.filter(c => c.region === "intl");
   return (
-    <main className="max-w-7xl mx-auto px-6 py-8" style={{ minHeight:"100vh" }}>
-      <header className="mb-10">
-        <h1 className="text-[15px] uppercase tracking-[0.15em]" style={{ color:"var(--color-text-secondary)" }}>thermometer</h1>
+    <main style={{ maxWidth:1200, margin:"0 auto", padding:"32px 24px", minHeight:"100vh" }}>
+      <header style={{ marginBottom:40 }}>
+        <h1 style={{ fontSize:15, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-secondary)", fontWeight:400, margin:0 }}>thermometer</h1>
       </header>
-      <div className="space-y-10">
+      <div style={{ display:"flex", flexDirection:"column", gap:40 }}>
         <section>
-          <h2 className="text-[11px] uppercase tracking-[0.15em] mb-2" style={{ color:"var(--color-text-tertiary)" }}>United States</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-8">
+          <h2 style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", marginBottom:8, fontWeight:400 }}>United States</h2>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(220px, 1fr))", gap:"0 32px" }}>
             {usCities.map(city => <CityCard key={city.slug} city={city} />)}
           </div>
         </section>
         <section>
-          <h2 className="text-[11px] uppercase tracking-[0.15em] mb-2" style={{ color:"var(--color-text-tertiary)" }}>International</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-8">
+          <h2 style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", marginBottom:8, fontWeight:400 }}>International</h2>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(220px, 1fr))", gap:"0 32px" }}>
             {intlCities.map(city => <CityCard key={city.slug} city={city} />)}
           </div>
         </section>
