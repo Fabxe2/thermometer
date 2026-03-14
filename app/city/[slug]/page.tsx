@@ -24,31 +24,33 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
   const city = getCityBySlug(slug);
   if (!city) notFound();
 
-  const weatherData = await fetchWeatherData(city);
+  // TypeScript narrowing — city is defined past this point
+  const safeCity = city!;
+
+  const weatherData = await fetchWeatherData(safeCity);
   const tempDisplay = weatherData.current?.tempDisplay ?? 0;
-  const polyData    = await fetchPolymarketData(city, tempDisplay);
+  const polyData    = await fetchPolymarketData(safeCity, tempDisplay);
 
   const current  = weatherData.current;
   const forecast = weatherData.forecast;
-  const time     = getLocalTime(city.timezone, city.tzAbbr);
+  const time     = getLocalTime(safeCity.timezone, safeCity.tzAbbr);
+  const unit     = safeCity.unit;
 
   const hourlyTemps = weatherData.hourly.slice(0,24).map(h =>
-    city.unit==="F" ? Math.round((h.tempC*9/5)+32) : Math.round(h.tempC)
+    unit==="F" ? Math.round((h.tempC*9/5)+32) : Math.round(h.tempC)
   );
 
-  // Top bucket = highest yesPrice (most likely outcome)
   const topBucket = polyData.buckets.length > 0
     ? polyData.buckets.reduce((a, b) => b.yesPrice > a.yesPrice ? b : a, polyData.buckets[0])
     : null;
 
-  const wunderUrl = `https://www.wunderground.com/history/daily/${city.wundergroundSlug}`;
-
-  // Add unit to label
   function labelWithUnit(label: string): string {
     if (!label || label.includes('°F') || label.includes('°C')) return label;
-    if (label.includes('°')) return label.replace('°', `°${city.unit}`);
+    if (label.includes('°')) return label.replace('°', `°${unit}`);
     return label;
   }
+
+  const wunderUrl = `https://www.wunderground.com/history/daily/${safeCity.wundergroundSlug}`;
 
   return (
     <main style={{ maxWidth:960, margin:"0 auto", padding:"32px 24px", minHeight:"100vh" }}>
@@ -56,18 +58,16 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
 
       <header style={{ marginTop:24, marginBottom:32, paddingBottom:24, borderBottom:"1px solid var(--color-rule)" }}>
         <div style={{ display:"flex", alignItems:"baseline", gap:12, marginBottom:4 }}>
-          <h1 style={{ fontSize:22, textTransform:"uppercase", letterSpacing:"0.05em", color:"var(--color-text-primary)", margin:0, fontWeight:400 }}>{city.name}</h1>
-          <span style={{ fontSize:13, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{city.station}</span>
+          <h1 style={{ fontSize:22, textTransform:"uppercase", letterSpacing:"0.05em", color:"var(--color-text-primary)", margin:0, fontWeight:400 }}>{safeCity.name}</h1>
+          <span style={{ fontSize:13, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{safeCity.station}</span>
           <span style={{ fontSize:13, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{time}</span>
         </div>
 
-        {/* Big temperature */}
         <div style={{ fontFamily:"monospace", fontSize:"clamp(72px,10vw,96px)", lineHeight:1, fontWeight:300, color:"var(--color-data)", marginTop:12 }}>
           {current ? current.tempDisplay : "—"}
-          <span style={{ fontSize:"clamp(32px,4vw,48px)", color:"var(--color-text-secondary)" }}>°{city.unit}</span>
+          <span style={{ fontSize:"clamp(32px,4vw,48px)", color:"var(--color-text-secondary)" }}>°{unit}</span>
         </div>
 
-        {/* Top bucket badge — same line as "observed at", in accent color */}
         {current && (
           <div style={{ display:"flex", alignItems:"center", gap:16, marginTop:6 }}>
             <span style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>
@@ -83,7 +83,6 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
       </header>
 
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 48px" }}>
-        {/* Sparkline */}
         <div>
           <h2 style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", fontWeight:400, marginBottom:16 }}>Temperature</h2>
           {hourlyTemps.length > 1 ? (
@@ -99,10 +98,8 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
             <div style={{ fontSize:11, color:"var(--color-text-tertiary)", padding:"16px 0" }}>No hourly data</div>
           )}
         </div>
-
-        {/* Market */}
         <div>
-          <MarketChart buckets={polyData.buckets} eventUrl={polyData.eventUrl} unit={city.unit} />
+          <MarketChart buckets={polyData.buckets} eventUrl={polyData.eventUrl} unit={unit} />
         </div>
       </div>
 
@@ -110,11 +107,11 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
         <div style={{ marginTop:40, paddingTop:24, display:"flex", gap:32, borderTop:"1px solid var(--color-rule)", flexWrap:"wrap" }}>
           <div>
             <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", marginBottom:4 }}>Today High</div>
-            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"var(--color-data)" }}>{Math.round(forecast.maxDisplay)}°{city.unit}</div>
+            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"var(--color-data)" }}>{Math.round(forecast.maxDisplay)}°{unit}</div>
           </div>
           <div>
             <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", marginBottom:4 }}>Today Low</div>
-            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"var(--color-data)" }}>{Math.round(forecast.minDisplay)}°{city.unit}</div>
+            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"var(--color-data)" }}>{Math.round(forecast.minDisplay)}°{unit}</div>
           </div>
           {current?.rawMetar && (
             <div style={{ flex:1, minWidth:0 }}>
@@ -124,7 +121,6 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
           )}
         </div>
       )}
-
       <div style={{ marginTop:32 }}>
         <a href={wunderUrl} target="_blank" rel="noopener noreferrer"
           style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)", textDecoration:"none" }}>
