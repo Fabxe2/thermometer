@@ -10,8 +10,8 @@ export type HourlyPoint = { time: string; tempC: number; };
 export type ForecastDay  = { maxC: number; minC: number; maxDisplay: number; minDisplay: number; };
 export type WeatherData  = {
   current: WeatherObs|null;
-  obsHourly: HourlyPoint[];      // observaciones reales (METAR/NWS) — línea sólida
-  forecastHourly: HourlyPoint[]; // forecast NWS/Open-Meteo — línea punteada
+  obsHourly: HourlyPoint[];      // observaciones reales (METAR/NWS) â lÃ­nea sÃ³lida
+  forecastHourly: HourlyPoint[]; // forecast NWS/Open-Meteo â lÃ­nea punteada
   forecast: ForecastDay|null;
   error?: string;
 };
@@ -57,11 +57,11 @@ async function fetchTgftpMetar(station: string, timezone: string): Promise<Weath
   } catch { return null; }
 }
 
-// NWS observations history — últimas 24h de METARs reales (línea sólida)
+// NWS observations history â Ãºltimas 24h de METARs reales (lÃ­nea sÃ³lida)
 async function fetchNWSObsHistory(station: string): Promise<HourlyPoint[]> {
   try {
     const res = await fetch(
-      `https://api.weather.gov/stations/${station}/observations?limit=24`,
+      `https://api.weather.gov/stations/${station}/observations?limit=48`,
       { headers:{"User-Agent":"thermometer/1.0"}, cache:"no-store" }
     );
     if (!res.ok) return [];
@@ -74,7 +74,7 @@ async function fetchNWSObsHistory(station: string): Promise<HourlyPoint[]> {
   } catch { return []; }
 }
 
-// NWS hourly forecast (línea punteada)
+// NWS hourly forecast (lÃ­nea punteada)
 async function fetchNWSHourlyForecast(lat: number, lon: number): Promise<HourlyPoint[]> {
   try {
     const pr = await fetch(`https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}`,
