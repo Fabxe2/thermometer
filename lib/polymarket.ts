@@ -19,68 +19,38 @@ function dateToSlug(d: Date, timezone: string): string {
 function parsePrices(raw: unknown): number[] {
   if (!raw) return [0, 1];
   let arr: unknown = raw;
-  if (typeof arr === "string") {
-    try { arr = JSON.parse(arr); } catch { return [0, 1]; }
-  }
+  if (typeof arr === "string") { try { arr = JSON.parse(arr); } catch { return [0, 1]; } }
   if (!Array.isArray(arr)) return [0, 1];
   return (arr as unknown[]).map(v => parseFloat(String(v)) || 0);
 }
 
-type RawMarket = {
-  conditionId: string; question: string;
-  clobTokenIds?: string[]; outcomePrices?: unknown;
-};
+type RawMarket = { conditionId: string; question: string; clobTokenIds?: string[]; outcomePrices?: unknown; };
 
 function parseQuestion(q: string): { low: number|null; high: number|null; label: string } {
-  // "between X-Y°F" or "between X–Y°C"
   const between = q.match(/between\s+([-\d.]+)[\u2013\-]([-\d.]+)/i);
-  // "X°F or below"
   const orBelow  = q.match(/([-\d.]+)[°℃℉FCfc]\s+or\s+below/i);
-  // "X°F or above"
   const orAbove  = q.match(/([-\d.]+)[°℃℉FCfc]\s+or\s+above/i);
-  // "be exactly X°C on" (single value like Buenos Aires)
   const exact    = q.match(/be\s+([-\d.]+)[°℃℉FCfc]\s+on/i);
-  // "be X°C or" fallback
   const beOr     = q.match(/be\s+([-\d.]+)[°℃℉FCfc]\s+or/i);
-
-  if (between) {
-    const low = parseFloat(between[1]), high = parseFloat(between[2]);
-    return { low, high, label: `${Math.round(low)}-${Math.round(high)}°` };
-  }
-  if (orBelow) {
-    const high = parseFloat(orBelow[1]);
-    return { low: null, high, label: `≤${Math.round(high)}°` };
-  }
-  if (orAbove) {
-    const low = parseFloat(orAbove[1]);
-    return { low, high: null, label: `≥${Math.round(low)}°` };
-  }
-  if (exact) {
-    const val = parseFloat(exact[1]);
-    return { low: val, high: val, label: `${Math.round(val)}°` };
-  }
-  if (beOr) {
-    const val = parseFloat(beOr[1]);
-    return { low: val, high: val, label: `${Math.round(val)}°` };
-  }
-  // Last resort: extract first number
+  if (between) { const l = parseFloat(between[1]), h = parseFloat(between[2]); return { low:l, high:h, label:`${Math.round(l)}-${Math.round(h)}°` }; }
+  if (orBelow) { const h = parseFloat(orBelow[1]); return { low:null, high:h, label:`≤${Math.round(h)}°` }; }
+  if (orAbove) { const l = parseFloat(orAbove[1]); return { low:l, high:null, label:`≥${Math.round(l)}°` }; }
+  if (exact)   { const v = parseFloat(exact[1]);   return { low:v, high:v, label:`${Math.round(v)}°` }; }
+  if (beOr)    { const v = parseFloat(beOr[1]);    return { low:v, high:v, label:`${Math.round(v)}°` }; }
   const num = q.match(/([-\d.]+)[°℃℉FCfc]/);
-  if (num) {
-    const val = parseFloat(num[1]);
-    return { low: val, high: val, label: `${Math.round(val)}°` };
-  }
-  return { low: null, high: null, label: q.substring(0, 8) };
+  if (num) { const v = parseFloat(num[1]); return { low:v, high:v, label:`${Math.round(v)}°` }; }
+  return { low:null, high:null, label:q.substring(0,8) };
 }
 
-async function tryFetchEvent(slug: string): Promise<{ markets: RawMarket[] } | null> {
+async function tryFetchEvent(slug: string): Promise<{ markets: RawMarket[] }|null> {
   try {
     const res = await fetch(
       `https://gamma-api.polymarket.com/events?slug=${slug}`,
-      { next: { revalidate: 60 } as RequestInit["next"], headers: { "User-Agent": "thermometer/1.0" } }
+      { next: { revalidate: 30 } as RequestInit["next"], headers: { "User-Agent": "thermometer/1.0" } }
     );
     if (!res.ok) return null;
     const events = await res.json();
-    if (!Array.isArray(events) || events.length === 0) return null;
+    if (!Array.isArray(events) || !events.length) return null;
     const event = events[0];
     if (!event?.markets?.length) return null;
     return event;
@@ -94,16 +64,8 @@ function parseBuckets(markets: RawMarket[], currentTempDisplay: number): MarketB
     const prices   = parsePrices(m.outcomePrices);
     const yesPrice = prices[0] ?? 0;
     const noPrice  = prices[1] ?? (1 - yesPrice);
-    // isCurrent: temp falls in [low, high] range
-    const isCurrent =
-      (low == null || currentTempDisplay >= low - 0.5) &&
-      (high == null || currentTempDisplay <= high + 0.5);
-    return {
-      label, low, high, question: q,
-      conditionId: m.conditionId,
-      yesTokenId: m.clobTokenIds?.[0] ?? "",
-      yesPrice, noPrice, isCurrent
-    };
+    const isCurrent = (low == null || currentTempDisplay >= low - 0.5) && (high == null || currentTempDisplay <= high + 0.5);
+    return { label, low, high, question: q, conditionId: m.conditionId, yesTokenId: m.clobTokenIds?.[0] ?? "", yesPrice, noPrice, isCurrent };
   });
   buckets.sort((a, b) => (a.low ?? -Infinity) - (b.low ?? -Infinity));
   return buckets;
@@ -116,7 +78,6 @@ export async function fetchPolymarketData(city: City, currentTempDisplay: number
     dateToSlug(new Date(now.getTime() - 86400000), city.timezone),
     dateToSlug(new Date(now.getTime() + 86400000), city.timezone),
   ];
-
   for (const dateStr of datesToTry) {
     const eventSlug = `${city.polymarketSlug}-${dateStr}`;
     const eventUrl  = `https://polymarket.com/event/${eventSlug}`;
@@ -126,13 +87,7 @@ export async function fetchPolymarketData(city: City, currentTempDisplay: number
       if (buckets.length > 0) return { eventSlug, eventUrl, buckets };
     }
   }
-
   const todaySlug = dateToSlug(now, city.timezone);
   const eventSlug = `${city.polymarketSlug}-${todaySlug}`;
-  return {
-    eventSlug,
-    eventUrl: `https://polymarket.com/event/${eventSlug}`,
-    buckets: [],
-    error: "No Polymarket event found"
-  };
+  return { eventSlug, eventUrl: `https://polymarket.com/event/${eventSlug}`, buckets: [], error: "No Polymarket event found" };
 }
