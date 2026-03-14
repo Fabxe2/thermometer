@@ -10,14 +10,13 @@ export type HourlyPoint = { time: string; tempC: number; };
 export type ForecastDay  = { maxC: number; minC: number; maxDisplay: number; minDisplay: number; };
 export type WeatherData  = {
   current: WeatherObs|null;
-  obsHourly: HourlyPoint[];      // PWS hourly obs (past) — solid white overlay
-  forecastHourly: HourlyPoint[]; // WU forecast all 24h — dashed backdrop
+  obsHourly: HourlyPoint[];
+  forecastHourly: HourlyPoint[];
   forecast: ForecastDay|null;
 };
 
 const WU_KEY = process.env.WU_API_KEY || '';
 
-// ── METAR parsers ─────────────────────────────────────────────────────────
 function parseTempFromMetar(metar: string): number | null {
   const tg = metar.match(/\bT([01])(\d{3})[01]\d{3}\b/);
   if (tg) { const s = tg[1]==='1'?-1:1; return s*parseInt(tg[2],10)/10; }
@@ -37,7 +36,6 @@ function parseCloudFromMetar(metar: string): string|null {
   return metar.match(/(CLR|SKC|CAVOK|FEW|SCT|BKN|OVC)/)?.[1]??null;
 }
 
-// ── tgftp METAR for current temp display ─────────────────────────────────
 async function fetchTgftpMetar(station: string, timezone: string): Promise<WeatherObs|null> {
   try {
     const res = await fetch(
@@ -64,22 +62,18 @@ async function fetchTgftpMetar(station: string, timezone: string): Promise<Weath
   } catch { return null; }
 }
 
-// ── WU PWS hourly history — EXACT same as original's solid line ──────────
-// v2/pws/history/hourly gives real observed temps from personal weather stations
-// This is what the original uses for the white solid overlay line
+// PWS hourly history — SAME stations as original → solid white overlay
+// Normalizes obsTimeLocal "2026-03-14 09:59:00" → "2026-03-14T09:59:00" (local ISO)
 async function fetchPWSHistory(pwsId: string, unit: "F"|"C"): Promise<HourlyPoint[]> {
   if (!WU_KEY || !pwsId) return [];
   try {
-    const today = new Date().toISOString().split('T')[0].replace(/-/g, ''); // "20260314"
+    const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
     const units = unit === 'F' ? 'e' : 'm';
     const json = await fetch(
       `https://api.weather.com/v2/pws/history/hourly` +
       `?stationId=${pwsId}&format=json&units=${units}&date=${today}&apiKey=${WU_KEY}`,
       { cache: 'no-store' }
-    ).then(r => {
-      if (!r.ok) throw new Error(`PWS ${r.status}`);
-      return r.json();
-    });
+    ).then(r => { if (!r.ok) throw new Error(`PWS ${r.status}`); return r.json(); });
 
     return (json.observations ?? []).map((o: {
       obsTimeLocal: string;
@@ -88,12 +82,14 @@ async function fetchPWSHistory(pwsId: string, unit: "F"|"C"): Promise<HourlyPoin
     }) => {
       const tempRaw = unit === 'F' ? (o.imperial?.tempAvg ?? 0) : (o.metric?.tempAvg ?? 0);
       const tempC = unit === 'F' ? (tempRaw - 32) * 5 / 9 : tempRaw;
-      return { time: o.obsTimeLocal, tempC };
+      // Convert "2026-03-14 09:59:00" → "2026-03-14T09:59:00" (local, no offset)
+      const isoTime = o.obsTimeLocal.replace(' ', 'T');
+      return { time: isoTime, tempC };
     });
   } catch { return []; }
 }
 
-// ── WU forecast hourly — dashed backdrop (same API, all 24h) ─────────────
+// WU hourly forecast — dashed backdrop (all 24h)
 async function fetchWUForecast(city: City): Promise<{ all: HourlyPoint[]; day: ForecastDay | null }> {
   if (!WU_KEY) return fetchOMFallback(city);
   try {
@@ -102,26 +98,23 @@ async function fetchWUForecast(city: City): Promise<{ all: HourlyPoint[]; day: F
       `https://api.weather.com/v3/wx/forecast/hourly/1day` +
       `?geocode=${city.lat},${city.lon}&units=${units}&language=en-US&format=json&apiKey=${WU_KEY}`,
       { cache: 'no-store' }
-    ).then(r => {
-      if (!r.ok) throw new Error(`WUF ${r.status}`);
-      return r.json();
-    });
+    ).then(r => { if (!r.ok) throw new Error(`WUF ${r.status}`); return r.json(); });
 
     const times: string[] = json.validTimeLocal ?? [];
     const temps: number[] = json.temperature ?? [];
     if (!times.length) return fetchOMFallback(city);
 
     const toC = (t: number) => city.unit === 'F' ? (t - 32) * 5 / 9 : t;
-    const all = times.map((t, i) => ({ time: t, tempC: toC(temps[i]) }));
+    const all = times.map((t, i) => ({
+      // WU gives "2026-03-14T13:00:00+0000" — normalize to local "2026-03-14T13:00:00"
+      time: t.replace(/[+-]\d{4}$/, '').replace(/Z$/, ''),
+      tempC: toC(temps[i])
+    }));
     const allC = all.map(p => p.tempC);
-    return {
-      all,
-      day: { maxC: Math.max(...allC), minC: Math.min(...allC), maxDisplay: 0, minDisplay: 0 }
-    };
+    return { all, day: { maxC: Math.max(...allC), minC: Math.min(...allC), maxDisplay: 0, minDisplay: 0 } };
   } catch { return fetchOMFallback(city); }
 }
 
-// ── Open-Meteo fallback ───────────────────────────────────────────────────
 async function fetchOMFallback(city: City): Promise<{ all: HourlyPoint[]; day: ForecastDay | null }> {
   try {
     const json = await fetch(
@@ -162,14 +155,8 @@ function applyForecastUnit(f: ForecastDay, city: City): ForecastDay {
   f.minDisplay = city.unit === 'F' ? cToF(f.minC) : Math.round(f.minC); return f;
 }
 
-// Extract local hour from PWS obsTimeLocal "2026-03-14 09:59:00"
-function pwsLocalHour(obsTimeLocal: string): number {
-  const m = obsTimeLocal.match(/\s(\d{2}):/);
-  return m ? parseInt(m[1], 10) : 0;
-}
-
-// Extract local hour from WU validTimeLocal "2026-03-14T13:00:00+0000"
-function wuLocalHour(t: string): number {
+// Extract local hour from "2026-03-14T09:59:00" or "2026-03-14T09:00:00"
+function localHour(t: string): number {
   const m = t.match(/T(\d{2}):/);
   return m ? parseInt(m[1], 10) : 0;
 }
@@ -183,36 +170,25 @@ function nowLocalH(timezone: string): number {
 export async function fetchWeatherData(city: City): Promise<WeatherData> {
   const currentH = nowLocalH(city.timezone);
 
-  // Run all fetches in parallel
   const [metarObs, pwsObs, wuForecast] = await Promise.all([
     fetchTgftpMetar(city.station, city.timezone),
-    // PWS obs: only if city has a pwsId (exact same stations as original)
     city.pwsId ? fetchPWSHistory(city.pwsId, city.unit) : Promise.resolve([]),
     fetchWUForecast(city),
   ]);
 
   const forecast = wuForecast.day ? applyForecastUnit(wuForecast.day, city) : null;
 
-  // obsHourly: PWS real observations if available, else WU forecast past hours
-  let obsHourly: HourlyPoint[];
-  if (pwsObs.length > 0) {
-    // Use PWS data for the solid overlay (exactly like original)
-    // Convert PWS local timestamps to match city time
-    obsHourly = pwsObs.filter(p => pwsLocalHour(p.time) <= currentH);
-  } else {
-    // No PWS for this city — use WU forecast past hours (seoul, ba, ankara, sp, paris)
-    obsHourly = wuForecast.all.filter(p => wuLocalHour(p.time) <= currentH);
-  }
+  // obsHourly = solid white overlay (PWS real obs if available, else WU past hours)
+  const obsHourly: HourlyPoint[] = pwsObs.length > 0
+    ? pwsObs.filter(p => localHour(p.time) <= currentH)
+    : wuForecast.all.filter(p => localHour(p.time) <= currentH);
 
-  // forecastHourly: all 24h from WU for dashed backdrop
+  // forecastHourly = dashed backdrop (all 24h WU forecast)
   const forecastHourly = wuForecast.all;
 
   if (metarObs) {
     return { current: applyUnit(metarObs, city), obsHourly, forecastHourly, forecast };
   }
   const omC = await fetchOMCurrent(city);
-  return {
-    current: omC ? applyUnit(omC, city) : null,
-    obsHourly, forecastHourly, forecast,
-  };
+  return { current: omC ? applyUnit(omC, city) : null, obsHourly, forecastHourly, forecast };
 }
