@@ -19,23 +19,26 @@ function toDisplay(tempC: number, unit: "F"|"C"): number {
   return unit === "F" ? cToF(tempC) : Math.round(tempC * 10) / 10;
 }
 
-// Returns x (0..1 within today) and the local date string "YYYY-MM-DD"
-function tsToXAndDate(isoTime: string, timezone: string): { x: number; date: string } | null {
+// Get hour-of-day (0..1) for a timestamp in the city's timezone
+// Does NOT filter by date — just extracts the time-of-day position
+function tsToX(isoTime: string, timezone: string): number | null {
   const d = new Date(isoTime);
   if (isNaN(d.getTime())) return null;
   const local = d.toLocaleString("en-US", {
     timeZone: timezone, hour12: false,
-    year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit"
   });
-  const mDate = local.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-  const mTime = local.match(/(\d{1,2}):(\d{2})$/);
-  if (!mDate || !mTime) return null;
-  const dateStr = `${mDate[3]}-${mDate[1]}-${mDate[2]}`;
-  let h = parseInt(mTime[1], 10);
+  // "HH:MM" or "H:MM"
+  const m = local.match(/(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
   if (h >= 24) h = 0;
-  const x = (h * 60 + parseInt(mTime[2], 10)) / (24 * 60);
-  return { x, date: dateStr };
+  return (h * 60 + parseInt(m[2], 10)) / (24 * 60);
+}
+
+// Today's date string in city timezone "YYYY-MM-DD"
+function getTodayStr(timezone: string): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: timezone });
 }
 
 export default async function CityPage({ params }: { params: Promise<{ slug: string }> }) {
@@ -52,28 +55,38 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
   const current  = weatherData.current;
   const forecast = weatherData.forecast;
   const time     = getLocalTime(safeCity.timezone, safeCity.tzAbbr);
+  const todayStr = getTodayStr(safeCity.timezone);
 
-  // Today's date in the city timezone e.g. "2026-03-14"
-  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: safeCity.timezone });
-
-  const obsPoints: ChartPoint[] = weatherData.obsHourly
-    .map(pt => {
-      const r = tsToXAndDate(pt.time, safeCity.timezone);
-      if (!r || r.date !== todayStr) return null;
-      return { x: r.x, y: toDisplay(pt.tempC, unit) };
-    })
-    .filter((p): p is ChartPoint => p !== null)
+  // Obs: last N hourly observations, mapped to x-axis by time-of-day
+  // Dedupe by hour (keep latest reading per hour slot)
+  const obsMap = new Map<number, number>(); // hourSlot -> temp
+  for (const pt of weatherData.obsHourly) {
+    const x = tsToX(pt.time, safeCity.timezone);
+    if (x === null) continue;
+    const slot = Math.round(x * 24); // 0..23
+    // Keep — later obs (earlier in array since sorted newest-first) win
+    if (!obsMap.has(slot)) {
+      obsMap.set(slot, toDisplay(pt.tempC, unit));
+    }
+  }
+  const obsPoints: ChartPoint[] = Array.from(obsMap.entries())
+    .map(([slot, y]) => ({ x: slot / 24, y }))
     .sort((a, b) => a.x - b.x);
 
+  // Forecast: today only, mapped to x-axis
   const fcastPoints: ChartPoint[] = weatherData.forecastHourly
     .map(pt => {
-      const r = tsToXAndDate(pt.time, safeCity.timezone);
-      if (!r || r.date !== todayStr) return null;
-      return { x: r.x, y: toDisplay(pt.tempC, unit) };
+      // Only today's forecast
+      const localDate = new Date(pt.time).toLocaleDateString("en-CA", { timeZone: safeCity.timezone });
+      if (localDate !== todayStr) return null;
+      const x = tsToX(pt.time, safeCity.timezone);
+      if (x === null) return null;
+      return { x, y: toDisplay(pt.tempC, unit) };
     })
     .filter((p): p is ChartPoint => p !== null)
     .sort((a, b) => a.x - b.x);
 
+  // Y axis from combined data
   const allY = [...obsPoints, ...fcastPoints].map(p => p.y);
   const yMin = allY.length ? Math.min(...allY) : 0;
   const yMax = allY.length ? Math.max(...allY) : 0;
