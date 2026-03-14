@@ -19,8 +19,6 @@ function toDisplay(tempC: number, unit: "F"|"C"): number {
   return unit === "F" ? cToF(tempC) : Math.round(tempC * 10) / 10;
 }
 
-// Parse a VC local timestamp "2026-03-14T09:00:00" or NWS "2026-03-14T09:00:00+00:00"
-// Returns { hour, dateStr } in the city's local timezone
 function tsToLocalInfo(isoTime: string, timezone: string): { hour: number; dateStr: string } | null {
   const hasOffset = /Z$|[+-]\d{2}:\d{2}$/.test(isoTime);
   if (hasOffset) {
@@ -34,10 +32,8 @@ function tsToLocalInfo(isoTime: string, timezone: string): { hour: number; dateS
     const dm = s.match(/(\d{2})\/(\d{2})\/(\d{4})/);
     const tm = s.match(/(\d{1,2}):(\d{2})$/);
     if (!dm || !tm) return null;
-    let h = parseInt(tm[1], 10) % 24;
-    return { hour: h, dateStr: `${dm[3]}-${dm[1]}-${dm[2]}` };
+    return { hour: parseInt(tm[1], 10) % 24, dateStr: `${dm[3]}-${dm[1]}-${dm[2]}` };
   } else {
-    // VC local: "2026-03-14T09:00:00" — hour is already local
     const dm = isoTime.match(/^(\d{4}-\d{2}-\d{2})T(\d{2})/);
     if (!dm) return null;
     return { hour: parseInt(dm[2], 10), dateStr: dm[1] };
@@ -60,7 +56,7 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
   const time     = getLocalTime(safeCity.timezone, safeCity.tzAbbr);
   const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: safeCity.timezone });
 
-  // forecastHourly = ALL 24h → dashed backdrop
+  // forecastHourly = all 24h of today → dashed line (always present all day)
   const fcastMap = new Map<number, number>();
   for (const pt of weatherData.forecastHourly) {
     const info = tsToLocalInfo(pt.time, safeCity.timezone);
@@ -68,7 +64,7 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
     if (!fcastMap.has(info.hour)) fcastMap.set(info.hour, toDisplay(pt.tempC, unit));
   }
 
-  // obsHourly = past hours only → solid overlay
+  // obsHourly = past hours → solid line (overlays dashed for past hours)
   const obsMap = new Map<number, number>();
   for (const pt of weatherData.obsHourly) {
     const info = tsToLocalInfo(pt.time, safeCity.timezone);
@@ -76,16 +72,19 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
     if (!obsMap.has(info.hour)) obsMap.set(info.hour, toDisplay(pt.tempC, unit));
   }
 
-  // Build 24 chart points
-  // forecast = dashed full day, observed = solid past only
+  // Build chart: BOTH forecast and observed use the forecast value for past hours
+  // This ensures both lines share exact same Y coords → solid overlays dashed perfectly
   const chartData: ChartPoint[] = Array.from({ length: 24 }, (_, h) => {
     const point: ChartPoint = { hour: h };
-    if (fcastMap.has(h)) point.forecast  = fcastMap.get(h);
-    if (obsMap.has(h))   point.observed  = obsMap.get(h);
+    if (fcastMap.has(h)) point.forecast = fcastMap.get(h);  // always set if data exists
+    if (obsMap.has(h)) {
+      // Use forecast value for solid line (same source) so they perfectly overlay
+      // Falls back to obs value if forecast not available (NWS cities)
+      point.observed = fcastMap.get(h) ?? obsMap.get(h);
+    }
     return point;
   });
 
-  // Y axis from all values
   const allY = chartData.flatMap(d => [d.observed, d.forecast].filter((v): v is number => v != null));
   const yMin = allY.length ? Math.min(...allY) : 0;
   const yMax = allY.length ? Math.max(...allY) : 0;
