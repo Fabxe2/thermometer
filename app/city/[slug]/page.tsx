@@ -37,62 +37,62 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
   const wunderUrl = `https://www.wunderground.com/history/daily/${city.wundergroundSlug}`;
 
   return (
-    <main className="max-w-5xl mx-auto px-6 py-8" style={{ minHeight:"100vh" }}>
-      <Link href="/" className="text-[11px] uppercase tracking-wider transition-colors" style={{ color:"var(--color-text-tertiary)" }}>All Cities</Link>
-      <header className="mt-6 mb-8 pb-6" style={{ borderBottom:"1px solid var(--color-rule)" }}>
-        <div className="flex items-baseline gap-3 mb-1">
-          <h1 className="text-[22px] uppercase tracking-wide" style={{ color:"var(--color-text-primary)" }}>{city.name}</h1>
-          <span className="text-[13px] font-mono" style={{ color:"var(--color-text-tertiary)" }}>{city.station}</span>
-          <span className="text-[13px] font-mono" style={{ color:"var(--color-text-tertiary)" }}>{time}</span>
+    <main style={{ maxWidth:960, margin:"0 auto", padding:"32px 24px", minHeight:"100vh" }}>
+      <Link href="/" style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.1em", color:"var(--color-text-tertiary)", textDecoration:"none" }}>← All Cities</Link>
+
+      <header style={{ marginTop:24, marginBottom:32, paddingBottom:24, borderBottom:"1px solid var(--color-rule)" }}>
+        <div style={{ display:"flex", alignItems:"baseline", gap:12, marginBottom:4 }}>
+          <h1 style={{ fontSize:22, textTransform:"uppercase", letterSpacing:"0.05em", color:"var(--color-text-primary)", margin:0, fontWeight:400 }}>{city.name}</h1>
+          <span style={{ fontSize:13, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{city.station}</span>
+          <span style={{ fontSize:13, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{time}</span>
         </div>
-        <div className="font-mono leading-none font-light tracking-tight mt-3" style={{ fontSize:"clamp(72px,10vw,96px)", color:"var(--color-data)" }}>
+        <div style={{ fontFamily:"monospace", fontSize:"clamp(72px,10vw,96px)", lineHeight:1, fontWeight:300, color:"var(--color-data)", marginTop:12 }}>
           {current ? current.tempDisplay : "—"}
           <span style={{ fontSize:"clamp(32px,4vw,48px)", color:"var(--color-text-secondary)" }}>°{city.unit}</span>
         </div>
-        {current && <span className="text-[11px] font-mono mt-1 block" style={{ color:"var(--color-text-tertiary)" }}>observed at {current.observedAt}</span>}
+        {current && <div style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)", marginTop:4 }}>observed at {current.observedAt}</div>}
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-12">
-        <div className="flex flex-col">
-          <h2 className="text-[11px] uppercase tracking-[0.15em] mb-4" style={{ color:"var(--color-text-tertiary)" }}>Temperature</h2>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 48px" }}>
+        <div>
+          <h2 style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", fontWeight:400, marginBottom:16 }}>Temperature</h2>
           {hourlyTemps.length > 1 ? (
-            <div className="relative" style={{ height:120 }}>
-              {(() => { const mn=Math.min(...hourlyTemps), mx=Math.max(...hourlyTemps); return (<>
-                <span className="absolute left-0 top-0 text-[10px] font-mono" style={{ color:"var(--color-text-tertiary)" }}>{mx}</span>
-                <span className="absolute left-0 bottom-5 text-[10px] font-mono" style={{ color:"var(--color-text-tertiary)" }}>{mn}</span>
-              </>); })()}
-              <div className="pl-6 h-full"><Sparkline data={hourlyTemps} width={500} height={100} /></div>
-              <div className="flex justify-between pl-6 mt-1 text-[10px] font-mono" style={{ color:"var(--color-text-tertiary)" }}>
+            <div style={{ position:"relative", height:120 }}>
+              <span style={{ position:"absolute", left:0, top:0, fontSize:10, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{Math.max(...hourlyTemps)}</span>
+              <span style={{ position:"absolute", left:0, bottom:20, fontSize:10, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{Math.min(...hourlyTemps)}</span>
+              <div style={{ paddingLeft:24, height:"100%" }}><Sparkline data={hourlyTemps} width={500} height={100} /></div>
+              <div style={{ display:"flex", justifyContent:"space-between", paddingLeft:24, marginTop:4, fontSize:10, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>
                 <span>12 AM</span><span>6 AM</span><span>12 PM</span><span>6 PM</span><span>9 PM</span>
               </div>
             </div>
-          ) : <div className="text-[11px] py-4" style={{ color:"var(--color-text-tertiary)" }}>No hourly data</div>}
+          ) : <div style={{ fontSize:11, color:"var(--color-text-tertiary)", padding:"16px 0" }}>No hourly data</div>}
         </div>
-        <div className="flex flex-col mt-8 lg:mt-0">
+        <div>
           <MarketChart buckets={polyData.buckets} eventUrl={polyData.eventUrl} />
         </div>
       </div>
 
       {forecast && (
-        <div className="mt-10 pt-6 flex gap-8" style={{ borderTop:"1px solid var(--color-rule)" }}>
+        <div style={{ marginTop:40, paddingTop:24, display:"flex", gap:32, borderTop:"1px solid var(--color-rule)" }}>
           <div>
-            <div className="text-[11px] uppercase tracking-[0.15em] mb-1" style={{ color:"var(--color-text-tertiary)" }}>Today High</div>
-            <div className="font-mono text-[28px] leading-none font-light" style={{ color:"var(--color-data)" }}>{Math.round(forecast.maxDisplay)}°{city.unit}</div>
+            <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", marginBottom:4 }}>Today High</div>
+            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"var(--color-data)" }}>{Math.round(forecast.maxDisplay)}°{city.unit}</div>
           </div>
           <div>
-            <div className="text-[11px] uppercase tracking-[0.15em] mb-1" style={{ color:"var(--color-text-tertiary)" }}>Today Low</div>
-            <div className="font-mono text-[28px] leading-none font-light" style={{ color:"var(--color-data)" }}>{Math.round(forecast.minDisplay)}°{city.unit}</div>
+            <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", marginBottom:4 }}>Today Low</div>
+            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"var(--color-data)" }}>{Math.round(forecast.minDisplay)}°{city.unit}</div>
           </div>
           {current?.rawMetar && (
-            <div className="flex-1 min-w-0">
-              <div className="text-[11px] uppercase tracking-[0.15em] mb-1" style={{ color:"var(--color-text-tertiary)" }}>Raw METAR</div>
-              <div className="text-[10px] font-mono truncate" style={{ color:"var(--color-text-tertiary)" }}>{current.rawMetar}</div>
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", marginBottom:4 }}>Raw METAR</div>
+              <div style={{ fontSize:10, fontFamily:"monospace", color:"var(--color-text-tertiary)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{current.rawMetar}</div>
             </div>
           )}
         </div>
       )}
-      <div className="mt-8">
-        <a href={wunderUrl} target="_blank" rel="noopener noreferrer" className="text-[11px] font-mono" style={{ color:"var(--color-text-tertiary)" }}>history on wunderground ↗</a>
+
+      <div style={{ marginTop:32 }}>
+        <a href={wunderUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)", textDecoration:"none" }}>history on wunderground ↗</a>
       </div>
     </main>
   );
