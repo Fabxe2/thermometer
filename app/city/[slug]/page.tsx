@@ -6,7 +6,7 @@ import { fetchPolymarketData } from "@/lib/polymarket";
 import Sparkline from "../../components/Sparkline";
 import MarketChart from "../../components/MarketChart";
 
-export const revalidate = 120;
+export const revalidate = 60; // revalida cada 60 segundos
 
 export async function generateStaticParams() {
   return CITIES.map(c => ({ slug: c.slug }));
@@ -23,8 +23,6 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
   const { slug } = await params;
   const city = getCityBySlug(slug);
   if (!city) notFound();
-
-  // TypeScript narrowing — city is defined past this point
   const safeCity = city!;
 
   const weatherData = await fetchWeatherData(safeCity);
@@ -62,12 +60,10 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
           <span style={{ fontSize:13, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{safeCity.station}</span>
           <span style={{ fontSize:13, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{time}</span>
         </div>
-
         <div style={{ fontFamily:"monospace", fontSize:"clamp(72px,10vw,96px)", lineHeight:1, fontWeight:300, color:"var(--color-data)", marginTop:12 }}>
           {current ? current.tempDisplay : "—"}
           <span style={{ fontSize:"clamp(32px,4vw,48px)", color:"var(--color-text-secondary)" }}>°{unit}</span>
         </div>
-
         {current && (
           <div style={{ display:"flex", alignItems:"center", gap:16, marginTop:6 }}>
             <span style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>
