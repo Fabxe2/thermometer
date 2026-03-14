@@ -43,6 +43,13 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
 
   const wunderUrl = `https://www.wunderground.com/history/daily/${city.wundergroundSlug}`;
 
+  // Add unit to label
+  function labelWithUnit(label: string): string {
+    if (!label || label.includes('°F') || label.includes('°C')) return label;
+    if (label.includes('°')) return label.replace('°', `°${city.unit}`);
+    return label;
+  }
+
   return (
     <main style={{ maxWidth:960, margin:"0 auto", padding:"32px 24px", minHeight:"100vh" }}>
       <Link href="/" style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.1em", color:"var(--color-text-tertiary)", textDecoration:"none" }}>← All Cities</Link>
@@ -55,27 +62,22 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
         </div>
 
         {/* Big temperature */}
-        <div style={{ display:"flex", alignItems:"flex-end", gap:16, marginTop:12 }}>
-          <div style={{ fontFamily:"monospace", fontSize:"clamp(72px,10vw,96px)", lineHeight:1, fontWeight:300, color:"var(--color-data)" }}>
-            {current ? current.tempDisplay : "—"}
-            <span style={{ fontSize:"clamp(32px,4vw,48px)", color:"var(--color-text-secondary)" }}>°{city.unit}</span>
-          </div>
-          {/* Top bucket badge next to temperature */}
-          {topBucket && (
-            <div style={{ marginBottom:8, display:"flex", flexDirection:"column", gap:2 }}>
-              <span style={{ fontSize:14, fontFamily:"monospace", color:"var(--color-accent)", fontWeight:600, lineHeight:1 }}>
-                {topBucket.label}
-              </span>
-              <span style={{ fontSize:14, fontFamily:"monospace", color:"var(--color-accent)", lineHeight:1 }}>
-                {Math.round(topBucket.yesPrice * 100)}¢
-              </span>
-            </div>
-          )}
+        <div style={{ fontFamily:"monospace", fontSize:"clamp(72px,10vw,96px)", lineHeight:1, fontWeight:300, color:"var(--color-data)", marginTop:12 }}>
+          {current ? current.tempDisplay : "—"}
+          <span style={{ fontSize:"clamp(32px,4vw,48px)", color:"var(--color-text-secondary)" }}>°{city.unit}</span>
         </div>
 
+        {/* Top bucket badge — same line as "observed at", in accent color */}
         {current && (
-          <div style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)", marginTop:4 }}>
-            observed at {current.observedAt}
+          <div style={{ display:"flex", alignItems:"center", gap:16, marginTop:6 }}>
+            <span style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>
+              observed at {current.observedAt}
+            </span>
+            {topBucket && (
+              <span style={{ fontSize:12, fontFamily:"monospace", color:"var(--color-accent)", fontWeight:500 }}>
+                {labelWithUnit(topBucket.label)} {Math.round(topBucket.yesPrice * 100)}¢
+              </span>
+            )}
           </div>
         )}
       </header>
@@ -100,11 +102,10 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
 
         {/* Market */}
         <div>
-          <MarketChart buckets={polyData.buckets} eventUrl={polyData.eventUrl} />
+          <MarketChart buckets={polyData.buckets} eventUrl={polyData.eventUrl} unit={city.unit} />
         </div>
       </div>
 
-      {/* High/Low + METAR */}
       {forecast && (
         <div style={{ marginTop:40, paddingTop:24, display:"flex", gap:32, borderTop:"1px solid var(--color-rule)", flexWrap:"wrap" }}>
           <div>
