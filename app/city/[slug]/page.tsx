@@ -19,49 +19,33 @@ function toDisplay(tempC: number, unit: "F"|"C"): number {
   return unit === "F" ? cToF(tempC) : Math.round(tempC * 10) / 10;
 }
 
-// Smart x-axis mapper:
-// - If timestamp has Z or +offset (e.g. NWS: "2026-03-14T04:51:00+00:00") → convert via timezone
-// - If timestamp has no offset (e.g. Open-Meteo: "2026-03-14T09:00") → treat as already local
+// Converts ISO timestamp to x position (0..1) in 24h day
+// Handles both UTC-offset stamps (NWS: "2026-03-14T04:51:00+00:00")
+// and local stamps (Open-Meteo: "2026-03-14T09:00")
 function tsToX(isoTime: string, timezone: string): number | null {
   let h: number, m: number;
-
   const hasOffset = /Z$|[+-]\d{2}:\d{2}$/.test(isoTime);
-
   if (hasOffset) {
-    // UTC/offset timestamp → convert to local timezone
     const d = new Date(isoTime);
     if (isNaN(d.getTime())) return null;
     const local = d.toLocaleString("en-US", {
-      timeZone: timezone, hour12: false,
-      hour: "2-digit", minute: "2-digit"
+      timeZone: timezone, hour12: false, hour: "2-digit", minute: "2-digit"
     });
     const match = local.match(/(\d{1,2}):(\d{2})$/);
     if (!match) return null;
-    h = parseInt(match[1], 10);
-    m = parseInt(match[2], 10);
+    h = parseInt(match[1], 10); m = parseInt(match[2], 10);
   } else {
-    // Local timestamp — extract HH:MM directly from the string
     const match = isoTime.match(/T(\d{2}):(\d{2})/);
     if (!match) return null;
-    h = parseInt(match[1], 10);
-    m = parseInt(match[2], 10);
+    h = parseInt(match[1], 10); m = parseInt(match[2], 10);
   }
-
   if (h >= 24) h = 0;
   return (h * 60 + m) / (24 * 60);
 }
 
-function getTodayStr(timezone: string): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: timezone });
-}
-
-// For local timestamps (Open-Meteo), extract date part directly
 function getDateStr(isoTime: string, timezone: string): string {
   const hasOffset = /Z$|[+-]\d{2}:\d{2}$/.test(isoTime);
-  if (hasOffset) {
-    return new Date(isoTime).toLocaleDateString("en-CA", { timeZone: timezone });
-  }
-  // Extract YYYY-MM-DD from "2026-03-14T09:00"
+  if (hasOffset) return new Date(isoTime).toLocaleDateString("en-CA", { timeZone: timezone });
   return isoTime.substring(0, 10);
 }
 
@@ -79,33 +63,41 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
   const current  = weatherData.current;
   const forecast = weatherData.forecast;
   const time     = getLocalTime(safeCity.timezone, safeCity.tzAbbr);
-  const todayStr = getTodayStr(safeCity.timezone);
+  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: safeCity.timezone });
 
-  // Obs (solid): last N hours, map by time-of-day (no date filter — show all obs in the day window)
-  const obsMap = new Map<number, number>();
+  // HISTORY (dashed line) = tgftp cycle obs — all hourly readings for the day
+  // Dedup by hour slot, keep only today
+  const histMap = new Map<number, number>();
   for (const pt of weatherData.obsHourly) {
     const x = tsToX(pt.time, safeCity.timezone);
     if (x === null) continue;
     const slot = Math.round(x * 24);
-    if (!obsMap.has(slot)) obsMap.set(slot, toDisplay(pt.tempC, unit));
+    if (!histMap.has(slot)) histMap.set(slot, toDisplay(pt.tempC, unit));
   }
-  const obsPoints: ChartPoint[] = Array.from(obsMap.entries())
+  const historyPoints: ChartPoint[] = Array.from(histMap.entries())
     .map(([slot, y]) => ({ x: slot / 24, y }))
     .sort((a, b) => a.x - b.x);
 
-  // Forecast (dashed): today only
-  const fcastPoints: ChartPoint[] = weatherData.forecastHourly
-    .map(pt => {
-      if (getDateStr(pt.time, safeCity.timezone) !== todayStr) return null;
-      const x = tsToX(pt.time, safeCity.timezone);
-      if (x === null) return null;
-      return { x, y: toDisplay(pt.tempC, unit) };
-    })
-    .filter((p): p is ChartPoint => p !== null)
-    .sort((a, b) => a.x - b.x);
+  // CURRENT POINT (solid short line) = just the current observed temperature
+  // Placed at the current time of day
+  const currentPoints: ChartPoint[] = [];
+  if (current) {
+    const x = tsToX(current.observedISO, safeCity.timezone);
+    if (x !== null) {
+      // Create a small 2-point segment around the current time (like the original)
+      const prevX = Math.max(0, x - 1/24);
+      // Find adjacent history point for smooth join
+      const nearbyHist = historyPoints.filter(p => Math.abs(p.x - x) < 2/24);
+      if (nearbyHist.length > 0) {
+        currentPoints.push(...nearbyHist);
+      }
+      currentPoints.push({ x, y: tempDisplay });
+      currentPoints.sort((a, b) => a.x - b.x);
+    }
+  }
 
-  // Y axis
-  const allY = [...obsPoints, ...fcastPoints].map(p => p.y);
+  // Y axis from all data
+  const allY = [...historyPoints, ...currentPoints].map(p => p.y);
   const yMin = allY.length ? Math.min(...allY) : 0;
   const yMax = allY.length ? Math.max(...allY) : 0;
   const yStep  = Math.ceil((yMax - yMin) / 3 / 2) * 2 || 2;
@@ -164,7 +156,7 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
             </div>
             <div style={{ flex:1, minWidth:0 }}>
               <div style={{ height:chartH }}>
-                <Sparkline obs={obsPoints} forecast={fcastPoints} height={chartH} />
+                <Sparkline history={historyPoints} current={currentPoints} height={chartH} />
               </div>
               <div style={{ display:"flex", justifyContent:"space-between", marginTop:6 }}>
                 {xLabels.map(l => (
