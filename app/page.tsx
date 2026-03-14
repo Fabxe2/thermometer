@@ -1,16 +1,25 @@
 import Link from "next/link";
 import { CITIES, getLocalTime } from "@/lib/cities";
 import { fetchWeatherData } from "@/lib/weather";
+import { fetchPolymarketData } from "@/lib/polymarket";
 
 export const revalidate = 300;
 
 async function CityCard({ city }: { city: (typeof CITIES)[0] }) {
-  const data = await fetchWeatherData(city);
-  const current = data.current;
-  const forecast = data.forecast;
-  let rangeStr = "—";
-  if (forecast) rangeStr = `${Math.round(forecast.minDisplay)}–${Math.round(forecast.maxDisplay)}°${city.unit}`;
-  const time = getLocalTime(city.timezone, city.tzAbbr);
+  const [weatherData, polyData] = await Promise.all([
+    fetchWeatherData(city),
+    fetchWeatherData(city).then(async w => fetchPolymarketData(city, w.current?.tempDisplay ?? 0)),
+  ]);
+
+  const current  = weatherData.current;
+  const forecast = weatherData.forecast;
+  const time     = getLocalTime(city.timezone, city.tzAbbr);
+
+  // Top bucket = highest yesPrice
+  const topBucket = polyData.buckets.length > 0
+    ? polyData.buckets.reduce((a, b) => b.yesPrice > a.yesPrice ? b : a, polyData.buckets[0])
+    : null;
+
   return (
     <Link href={`/city/${city.slug}`} style={{ display:"block", textDecoration:"none", color:"inherit" }}>
       <div style={{ padding:"16px 0", borderBottom:"1px solid var(--color-rule)" }}>
@@ -22,16 +31,24 @@ async function CityCard({ city }: { city: (typeof CITIES)[0] }) {
           {current ? current.tempDisplay : "—"}
           <span style={{ fontSize:16, color:"var(--color-text-secondary)" }}>°{city.unit}</span>
         </div>
-        <div style={{ marginTop:8 }}>
-          <span style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{rangeStr}</span>
-        </div>
+        {/* Top bucket highlight — like the original */}
+        {topBucket && (
+          <div style={{ marginTop:6, display:"flex", alignItems:"center", gap:8 }}>
+            <span style={{ fontSize:12, fontFamily:"monospace", color:"var(--color-accent)", fontWeight:500 }}>
+              {topBucket.label}
+            </span>
+            <span style={{ fontSize:12, fontFamily:"monospace", color:"var(--color-accent)" }}>
+              {Math.round(topBucket.yesPrice * 100)}¢
+            </span>
+          </div>
+        )}
       </div>
     </Link>
   );
 }
 
 export default function Home() {
-  const usCities = CITIES.filter(c => c.region === "us");
+  const usCities   = CITIES.filter(c => c.region === "us");
   const intlCities = CITIES.filter(c => c.region === "intl");
   return (
     <main style={{ maxWidth:1200, margin:"0 auto", padding:"32px 24px", minHeight:"100vh" }}>
