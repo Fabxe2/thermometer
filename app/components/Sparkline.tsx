@@ -1,70 +1,57 @@
 "use client";
 
+export type ChartPoint = { x: number; y: number }; // x: 0..1 (position in 24h day), y: temp
+
 type Props = {
-  obs: number[];       // observaciones reales — línea sólida blanca
-  forecast: number[];  // forecast NWS — línea punteada blanca
-  width?: number;
+  obs: ChartPoint[];
+  forecast: ChartPoint[];
   height?: number;
 };
 
-function buildPath(data: number[], minV: number, maxV: number, w: number, h: number): string {
-  if (data.length < 2) return "";
-  const range = maxV - minV || 1;
-  const stepX = w / (data.length - 1);
-  return data.map((v, i) => {
-    const x = i * stepX;
-    const y = h - ((v - minV) / range) * h;
-    return (i === 0 ? "M" : "L") + x.toFixed(1) + "," + y.toFixed(1);
-  }).join(" ");
-}
+export default function Sparkline({ obs, forecast, height = 160 }: Props) {
+  const allY = [...obs, ...forecast].map(p => p.y);
+  if (allY.length === 0) return null;
 
-export default function Sparkline({ obs, forecast, width = 500, height = 120 }: Props) {
-  const all = [...obs, ...forecast].filter(v => !isNaN(v));
-  if (all.length === 0) return null;
+  const minY = Math.min(...allY);
+  const maxY = Math.max(...allY);
+  const range = maxY - minY || 1;
+  const pad = range * 0.1;
+  const lo = minY - pad;
+  const hi = maxY + pad;
+  const span = hi - lo;
 
-  const minV = Math.min(...all);
-  const maxV = Math.max(...all);
-  // Add 5% padding
-  const pad  = (maxV - minV) * 0.05 || 1;
-  const lo   = minV - pad;
-  const hi   = maxV + pad;
+  const W = 500;
+  const H = height;
 
-  const obsPath  = buildPath(obs,      lo, hi, width, height);
-  const forePath = buildPath(forecast, lo, hi, width, height);
+  function toSVG(pts: ChartPoint[]): string {
+    if (pts.length < 2) return "";
+    return pts.map((p, i) => {
+      const x = (p.x * W).toFixed(1);
+      const y = (H - ((p.y - lo) / span * H)).toFixed(1);
+      return (i === 0 ? "M" : "L") + x + "," + y;
+    }).join(" ");
+  }
 
-  // Y axis ticks — 4 nice round values
-  const step   = Math.ceil((hi - lo) / 4 / 2) * 2;
-  const start  = Math.ceil(lo / step) * step;
-  const yTicks = Array.from({ length: 5 }, (_, i) => start + i * step).filter(t => t >= lo && t <= hi);
+  const obsPath   = toSVG(obs);
+  const fcastPath = toSVG(forecast);
 
   return (
-    <svg
-      viewBox={`0 0 ${width} ${height}`}
-      preserveAspectRatio="none"
-      style={{ width: "100%", height: "100%", overflow: "visible" }}
-    >
-      {/* Forecast line — dashed */}
-      {forePath && (
-        <path
-          d={forePath}
-          fill="none"
-          stroke="var(--color-text-secondary)"
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"
+      style={{ width:"100%", height:"100%", overflow:"visible" }}>
+      {/* Forecast — dashed, slightly dimmer */}
+      {fcastPath && (
+        <path d={fcastPath} fill="none"
+          stroke="rgba(255,255,255,0.45)"
           strokeWidth="1.5"
           strokeDasharray="4 3"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
+          strokeLinecap="round" strokeLinejoin="round" />
       )}
-      {/* Observations line — solid, on top */}
+      {/* Observations — solid white, on top */}
       {obsPath && (
-        <path
-          d={obsPath}
-          fill="none"
+        <path d={obsPath} fill="none"
           stroke="var(--color-data)"
           strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
+          strokeLinecap="round" strokeLinejoin="round" />
       )}
     </svg>
   );
