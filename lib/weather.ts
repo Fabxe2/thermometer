@@ -10,10 +10,12 @@ export type HourlyPoint = { time: string; tempC: number; };
 export type ForecastDay  = { maxC: number; minC: number; maxDisplay: number; minDisplay: number; };
 export type WeatherData  = {
   current: WeatherObs|null;
-  obsHourly: HourlyPoint[];      // past observations — solid line
-  forecastHourly: HourlyPoint[]; // future forecast — dashed line
+  obsHourly: HourlyPoint[];      // past hours — solid line
+  forecastHourly: HourlyPoint[]; // future hours — dashed line
   forecast: ForecastDay|null;
 };
+
+const VC_KEY = process.env.VISUAL_CROSSING_KEY || '';
 
 // ── METAR parsers ─────────────────────────────────────────────────────────
 function parseTempFromMetar(metar: string): number | null {
@@ -35,7 +37,7 @@ function parseCloudFromMetar(metar: string): string|null {
   return metar.match(/(CLR|SKC|CAVOK|FEW|SCT|BKN|OVC)/)?.[1]??null;
 }
 
-// ── tgftp current METAR ───────────────────────────────────────────────────
+// ── tgftp current METAR (real-time, no-cache) ─────────────────────────────
 async function fetchTgftpMetar(station: string, timezone: string): Promise<WeatherObs|null> {
   try {
     const res = await fetch(
@@ -62,50 +64,97 @@ async function fetchTgftpMetar(station: string, timezone: string): Promise<Weath
   } catch { return null; }
 }
 
-// ── Open-Meteo: past obs + forecast in ONE request ────────────────────────
-// past_days=1 gives yesterday+today historical, forecast_days=1 gives today+tomorrow
-// We split by the current time: past hours = obsHourly, future hours = forecastHourly
-// Same model source = lines stay aligned on the chart
-async function fetchOMPastAndForecast(city: City): Promise<{
+// ── Visual Crossing: ONE request → full day obs + forecast ────────────────
+// Returns hourly temps for TODAY split into past (solid) and future (dashed)
+// Single model source = lines are perfectly aligned on the chart
+async function fetchVisualCrossing(city: City): Promise<{
   obsHourly: HourlyPoint[];
   forecastHourly: HourlyPoint[];
-  day: ForecastDay|null;
+  day: ForecastDay | null;
+}> {
+  if (!VC_KEY) {
+    // Fallback to Open-Meteo if no key configured
+    return fetchOMFallback(city);
+  }
+  try {
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: city.timezone }); // "2026-03-14"
+    const location = `${city.lat},${city.lon}`;
+    const url = `https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/${location}/${today}` +
+      `?unitGroup=metric&include=hours&key=${VC_KEY}&contentType=json`;
+
+    const json = await fetch(url, { next: { revalidate: 3600 } as RequestInit['next'] }).then(r => {
+      if (!r.ok) throw new Error(`VC error ${r.status}`);
+      return r.json();
+    });
+
+    const day = json.days?.[0];
+    if (!day) return fetchOMFallback(city);
+
+    // Current local hour in city timezone
+    const nowLocalH = parseInt(
+      new Date().toLocaleString('en-US', { timeZone: city.timezone, hour: '2-digit', hour12: false }),
+      10
+    );
+
+    const obsHourly: HourlyPoint[] = [];
+    const forecastHourly: HourlyPoint[] = [];
+
+    for (const h of (day.hours ?? [])) {
+      // h.datetime = "00:00:00" local time
+      const hourNum = parseInt(h.datetime.split(':')[0], 10);
+      const isoTime = `${today}T${h.datetime}`; // "2026-03-14T09:00:00" local
+      const pt: HourlyPoint = { time: isoTime, tempC: h.temp };
+      if (hourNum <= nowLocalH) {
+        obsHourly.push(pt);      // past or current hour → solid
+      } else {
+        forecastHourly.push(pt); // future → dashed
+      }
+    }
+
+    const forecastDay: ForecastDay = {
+      maxC: day.tempmax, minC: day.tempmin, maxDisplay: 0, minDisplay: 0
+    };
+    return { obsHourly, forecastHourly, day: forecastDay };
+  } catch {
+    return fetchOMFallback(city);
+  }
+}
+
+// ── Open-Meteo fallback (used when VC key not set) ────────────────────────
+async function fetchOMFallback(city: City): Promise<{
+  obsHourly: HourlyPoint[];
+  forecastHourly: HourlyPoint[];
+  day: ForecastDay | null;
 }> {
   try {
     const url = `https://api.open-meteo.com/v1/forecast` +
       `?latitude=${city.lat}&longitude=${city.lon}` +
-      `&hourly=temperature_2m` +
-      `&daily=temperature_2m_max,temperature_2m_min` +
-      `&timezone=${encodeURIComponent(city.timezone)}` +
-      `&past_days=1&forecast_days=1`;
+      `&hourly=temperature_2m&daily=temperature_2m_max,temperature_2m_min` +
+      `&timezone=${encodeURIComponent(city.timezone)}&past_days=1&forecast_days=1`;
 
     const json = await fetch(url, { cache: 'no-store' }).then(r => r.json());
-    const times: string[] = json.hourly.time;         // "2026-03-13T00:00", no offset
+    const times: string[] = json.hourly.time;
     const temps: number[] = json.hourly.temperature_2m;
 
-    // Current local time in city timezone as "YYYY-MM-DDTHH" prefix
-    const nowLocal = new Date().toLocaleString('en-US', {
-      timeZone: city.timezone, year:'numeric', month:'2-digit', day:'2-digit',
-      hour:'2-digit', minute:'2-digit', hour12:false
-    });
-    // Parse "MM/DD/YYYY, HH:MM" → "YYYY-MM-DDTHH"
-    const mm = nowLocal.match(/(\d{2})\/(\d{2})\/(\d{4}),\s*(\d{1,2}):(\d{2})/);
-    const nowHourStr = mm ? `${mm[3]}-${mm[1]}-${mm[2]}T${String(parseInt(mm[4])).padStart(2,'0')}` : '';
+    const nowLocalH = parseInt(
+      new Date().toLocaleString('en-US', { timeZone: city.timezone, hour: '2-digit', hour12: false }),
+      10
+    );
+    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: city.timezone });
 
     const obsHourly: HourlyPoint[] = [];
     const forecastHourly: HourlyPoint[] = [];
 
     times.forEach((t, i) => {
+      if (!t.startsWith(todayStr)) return;
+      const hourNum = parseInt(t.split('T')[1].split(':')[0], 10);
       const pt: HourlyPoint = { time: t, tempC: temps[i] };
-      if (!nowHourStr || t <= nowHourStr) {
-        obsHourly.push(pt);    // past or current hour → solid line
-      } else {
-        forecastHourly.push(pt); // future → dashed line
-      }
+      if (hourNum <= nowLocalH) obsHourly.push(pt);
+      else forecastHourly.push(pt);
     });
 
     const day: ForecastDay = {
-      maxC: json.daily.temperature_2m_max[1], // index 1 = today (0 = yesterday with past_days=1)
+      maxC: json.daily.temperature_2m_max[1],
       minC: json.daily.temperature_2m_min[1],
       maxDisplay: 0, minDisplay: 0
     };
@@ -113,7 +162,7 @@ async function fetchOMPastAndForecast(city: City): Promise<{
   } catch { return { obsHourly: [], forecastHourly: [], day: null }; }
 }
 
-// ── NWS obs history (US only — single request) ────────────────────────────
+// ── NWS obs history (US cities — single request) ──────────────────────────
 async function fetchNWSObsHistory(station: string): Promise<HourlyPoint[]> {
   try {
     const res = await fetch(
@@ -125,24 +174,23 @@ async function fetchNWSObsHistory(station: string): Promise<HourlyPoint[]> {
     return (json.features ?? [])
       .filter((f: {properties:{temperature:{value:number|null}}}) => f.properties.temperature.value != null)
       .map((f: {properties:{timestamp:string;temperature:{value:number}}}) => ({
-        time: f.properties.timestamp,
-        tempC: f.properties.temperature.value,
+        time: f.properties.timestamp, tempC: f.properties.temperature.value,
       }))
       .reverse();
   } catch { return []; }
 }
 
-// ── NWS hourly forecast (US only) ────────────────────────────────────────
+// ── NWS hourly forecast (US cities) ──────────────────────────────────────
 async function fetchNWSHourlyForecast(lat: number, lon: number): Promise<HourlyPoint[]> {
   try {
     const pr = await fetch(`https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}`,
-      { headers: { 'User-Agent': 'thermometer/1.0' }, next: { revalidate: 3600 } as RequestInit['next'] });
+      { headers: {'User-Agent':'thermometer/1.0'}, next:{revalidate:3600} as RequestInit['next'] });
     if (!pr.ok) return [];
     const pj = await pr.json(); const url:string=pj.properties?.forecastHourly; if (!url) return [];
-    const fr = await fetch(url, { headers: { 'User-Agent': 'thermometer/1.0' }, next: { revalidate: 3600 } as RequestInit['next'] });
+    const fr = await fetch(url, { headers: {'User-Agent':'thermometer/1.0'}, next:{revalidate:3600} as RequestInit['next'] });
     if (!fr.ok) return [];
     return (await fr.json()).properties?.periods?.slice(0,24).map(
-      (p: {startTime:string;temperature:number;temperatureUnit:string}) => ({
+      (p:{startTime:string;temperature:number;temperatureUnit:string}) => ({
         time: p.startTime,
         tempC: p.temperatureUnit==='F' ? (p.temperature-32)*5/9 : p.temperature,
       })
@@ -153,10 +201,10 @@ async function fetchNWSHourlyForecast(lat: number, lon: number): Promise<HourlyP
 async function fetchNWSForecast(lat: number, lon: number): Promise<ForecastDay|null> {
   try {
     const pr = await fetch(`https://api.weather.gov/points/${lat.toFixed(4)},${lon.toFixed(4)}`,
-      { headers: { 'User-Agent': 'thermometer/1.0' }, next: { revalidate: 3600 } as RequestInit['next'] });
+      { headers: {'User-Agent':'thermometer/1.0'}, next:{revalidate:3600} as RequestInit['next'] });
     if (!pr.ok) return null;
     const pj = await pr.json(); const url:string=pj.properties?.forecast; if (!url) return null;
-    const fr = await fetch(url, { headers: { 'User-Agent': 'thermometer/1.0' }, next: { revalidate: 3600 } as RequestInit['next'] });
+    const fr = await fetch(url, { headers: {'User-Agent':'thermometer/1.0'}, next:{revalidate:3600} as RequestInit['next'] });
     if (!fr.ok) return null;
     const periods:Array<{isDaytime:boolean;temperature:number;temperatureUnit:string}>=
       (await fr.json()).properties?.periods??[];
@@ -171,7 +219,7 @@ async function fetchOMCurrent(city: City): Promise<WeatherObs|null> {
   try {
     const json = await fetch(
       `https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}&current=temperature_2m,wind_speed_10m,wind_direction_10m&timezone=auto`,
-      { cache: 'no-store' }
+      { cache:'no-store' }
     ).then(r=>r.json());
     const tempC:number=json.current.temperature_2m, now=new Date();
     return { tempC, tempDisplay:tempC, unit:'C', station:city.station,
@@ -193,7 +241,7 @@ function applyForecastUnit(f: ForecastDay, city: City): ForecastDay {
 
 export async function fetchWeatherData(city: City): Promise<WeatherData> {
   if (city.region === 'us') {
-    // US: NWS obs (past, solid) + NWS forecast (future, dashed) + tgftp current
+    // US: tgftp current + NWS obs history + NWS forecast (or VC forecast)
     const [metarObs, obsHourly, forecastHourly, forecastDay] = await Promise.all([
       fetchTgftpMetar(city.station, city.timezone),
       fetchNWSObsHistory(city.station),
@@ -205,28 +253,25 @@ export async function fetchWeatherData(city: City): Promise<WeatherData> {
     return { current, obsHourly, forecastHourly, forecast };
   }
 
-  // International: Open-Meteo with past_days=1 for BOTH lines (same model = aligned)
-  // + tgftp current for the display temperature
-  const [metarObs, omResult] = await Promise.all([
+  // International: tgftp current + Visual Crossing for chart (single source)
+  const [metarObs, vcResult] = await Promise.all([
     fetchTgftpMetar(city.station, city.timezone),
-    fetchOMPastAndForecast(city),
+    fetchVisualCrossing(city),  // ONE request → past (solid) + future (dashed)
   ]);
-
-  const forecast = omResult.day ? applyForecastUnit(omResult.day, city) : null;
-
+  const forecast = vcResult.day ? applyForecastUnit(vcResult.day, city) : null;
   if (metarObs) {
     return {
       current: applyUnit(metarObs, city),
-      obsHourly: omResult.obsHourly,
-      forecastHourly: omResult.forecastHourly,
+      obsHourly: vcResult.obsHourly,
+      forecastHourly: vcResult.forecastHourly,
       forecast
     };
   }
   const omC = await fetchOMCurrent(city);
   return {
     current: omC ? applyUnit(omC, city) : null,
-    obsHourly: omResult.obsHourly,
-    forecastHourly: omResult.forecastHourly,
+    obsHourly: vcResult.obsHourly,
+    forecastHourly: vcResult.forecastHourly,
     forecast
   };
 }
