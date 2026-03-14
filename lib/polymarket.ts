@@ -16,7 +16,6 @@ function dateToSlug(d: Date, timezone: string): string {
   return `${MONTHS[local.getMonth()]}-${local.getDate()}-${local.getFullYear()}`;
 }
 
-// outcomePrices can come as string[] OR as a JSON string like '["0.5","0.5"]'
 function parsePrices(raw: unknown): number[] {
   if (!raw) return [0, 1];
   let arr: unknown = raw;
@@ -28,11 +27,50 @@ function parsePrices(raw: unknown): number[] {
 }
 
 type RawMarket = {
-  conditionId: string;
-  question: string;
-  clobTokenIds?: string[];
-  outcomePrices?: unknown;
+  conditionId: string; question: string;
+  clobTokenIds?: string[]; outcomePrices?: unknown;
 };
+
+function parseQuestion(q: string): { low: number|null; high: number|null; label: string } {
+  // "between X-Y°F" or "between X–Y°C"
+  const between = q.match(/between\s+([-\d.]+)[\u2013\-]([-\d.]+)/i);
+  // "X°F or below"
+  const orBelow  = q.match(/([-\d.]+)[°℃℉FCfc]\s+or\s+below/i);
+  // "X°F or above"
+  const orAbove  = q.match(/([-\d.]+)[°℃℉FCfc]\s+or\s+above/i);
+  // "be exactly X°C on" (single value like Buenos Aires)
+  const exact    = q.match(/be\s+([-\d.]+)[°℃℉FCfc]\s+on/i);
+  // "be X°C or" fallback
+  const beOr     = q.match(/be\s+([-\d.]+)[°℃℉FCfc]\s+or/i);
+
+  if (between) {
+    const low = parseFloat(between[1]), high = parseFloat(between[2]);
+    return { low, high, label: `${Math.round(low)}-${Math.round(high)}°` };
+  }
+  if (orBelow) {
+    const high = parseFloat(orBelow[1]);
+    return { low: null, high, label: `≤${Math.round(high)}°` };
+  }
+  if (orAbove) {
+    const low = parseFloat(orAbove[1]);
+    return { low, high: null, label: `≥${Math.round(low)}°` };
+  }
+  if (exact) {
+    const val = parseFloat(exact[1]);
+    return { low: val, high: val, label: `${Math.round(val)}°` };
+  }
+  if (beOr) {
+    const val = parseFloat(beOr[1]);
+    return { low: val, high: val, label: `${Math.round(val)}°` };
+  }
+  // Last resort: extract first number
+  const num = q.match(/([-\d.]+)[°℃℉FCfc]/);
+  if (num) {
+    const val = parseFloat(num[1]);
+    return { low: val, high: val, label: `${Math.round(val)}°` };
+  }
+  return { low: null, high: null, label: q.substring(0, 8) };
+}
 
 async function tryFetchEvent(slug: string): Promise<{ markets: RawMarket[] } | null> {
   try {
@@ -52,25 +90,14 @@ async function tryFetchEvent(slug: string): Promise<{ markets: RawMarket[] } | n
 function parseBuckets(markets: RawMarket[], currentTempDisplay: number): MarketBucket[] {
   const buckets: MarketBucket[] = markets.map(m => {
     const q = m.question ?? "";
-    let low: number|null = null, high: number|null = null;
-    const between = q.match(/between\s+([-\d.]+)[\u2013\-]([-\d.]+)/i);
-    const orBelow  = q.match(/([-\d.]+)[°℃℉FC]\s+or\s+below/i);
-    const orAbove  = q.match(/([-\d.]+)[°℃℉FC]\s+or\s+above/i);
-    if (between)      { low = parseFloat(between[1]); high = parseFloat(between[2]); }
-    else if (orBelow) { high = parseFloat(orBelow[1]); }
-    else if (orAbove) { low  = parseFloat(orAbove[1]); }
-
+    const { low, high, label } = parseQuestion(q);
     const prices   = parsePrices(m.outcomePrices);
     const yesPrice = prices[0] ?? 0;
     const noPrice  = prices[1] ?? (1 - yesPrice);
-    const isCurrent = (low == null || currentTempDisplay >= low) && (high == null || currentTempDisplay <= high);
-
-    let label = "";
-    if (between)      label = `${Math.round(low!)}-${Math.round(high!)}°`;
-    else if (orBelow) label = `≤${Math.round(high!)}°`;
-    else if (orAbove) label = `≥${Math.round(low!)}°`;
-    else              label = q.substring(0, 12);
-
+    // isCurrent: temp falls in [low, high] range
+    const isCurrent =
+      (low == null || currentTempDisplay >= low - 0.5) &&
+      (high == null || currentTempDisplay <= high + 0.5);
     return {
       label, low, high, question: q,
       conditionId: m.conditionId,
@@ -84,9 +111,6 @@ function parseBuckets(markets: RawMarket[], currentTempDisplay: number): MarketB
 
 export async function fetchPolymarketData(city: City, currentTempDisplay: number): Promise<PolymarketData> {
   const now = new Date();
-
-  // Try today in city timezone, then yesterday and tomorrow
-  // (Vercel runs UTC; city may be behind or ahead)
   const datesToTry = [
     dateToSlug(now, city.timezone),
     dateToSlug(new Date(now.getTime() - 86400000), city.timezone),
