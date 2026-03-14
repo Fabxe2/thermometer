@@ -19,31 +19,22 @@ function toDisplay(tempC: number, unit: "F"|"C"): number {
   return unit === "F" ? cToF(tempC) : Math.round(tempC * 10) / 10;
 }
 
-function getLocalDateStr(timezone: string): string {
-  // Returns "2026-03-14" — today in the city timezone
-  return new Date().toLocaleDateString("en-CA", { timeZone: timezone });
-}
-
-// Returns x (0..1 in 24h) and localDate string for filtering
+// Returns x (0..1 within today) and the local date string "YYYY-MM-DD"
 function tsToXAndDate(isoTime: string, timezone: string): { x: number; date: string } | null {
   const d = new Date(isoTime);
   if (isNaN(d.getTime())) return null;
-  // Get local datetime parts
   const local = d.toLocaleString("en-US", {
     timeZone: timezone, hour12: false,
     year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit"
   });
-  // Format: "03/14/2026, 23:51" or "MM/DD/YYYY, HH:MM"
   const mDate = local.match(/(\d{2})\/(\d{2})\/(\d{4})/);
   const mTime = local.match(/(\d{1,2}):(\d{2})$/);
   if (!mDate || !mTime) return null;
-  const dateStr = `${mDate[3]}-${mDate[1]}-${mDate[2]}`; // "2026-03-14"
+  const dateStr = `${mDate[3]}-${mDate[1]}-${mDate[2]}`;
   let h = parseInt(mTime[1], 10);
-  const m = parseInt(mTime[2], 10);
-  // Handle hour "24" edge case
   if (h >= 24) h = 0;
-  const x = (h * 60 + m) / (24 * 60);
+  const x = (h * 60 + parseInt(mTime[2], 10)) / (24 * 60);
   return { x, date: dateStr };
 }
 
@@ -61,9 +52,10 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
   const current  = weatherData.current;
   const forecast = weatherData.forecast;
   const time     = getLocalTime(safeCity.timezone, safeCity.tzAbbr);
-  const todayStr = getLocalDateStr(safeCity.timezone); // "2026-03-14" in city tz
 
-  // Obs points — filter to today only in city timezone
+  // Today's date in the city timezone e.g. "2026-03-14"
+  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: safeCity.timezone });
+
   const obsPoints: ChartPoint[] = weatherData.obsHourly
     .map(pt => {
       const r = tsToXAndDate(pt.time, safeCity.timezone);
@@ -73,7 +65,6 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
     .filter((p): p is ChartPoint => p !== null)
     .sort((a, b) => a.x - b.x);
 
-  // Forecast points — filter to today only
   const fcastPoints: ChartPoint[] = weatherData.forecastHourly
     .map(pt => {
       const r = tsToXAndDate(pt.time, safeCity.timezone);
@@ -83,15 +74,13 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
     .filter((p): p is ChartPoint => p !== null)
     .sort((a, b) => a.x - b.x);
 
-  // Y axis ticks
   const allY = [...obsPoints, ...fcastPoints].map(p => p.y);
   const yMin = allY.length ? Math.min(...allY) : 0;
   const yMax = allY.length ? Math.max(...allY) : 0;
   const yStep  = Math.ceil((yMax - yMin) / 3 / 2) * 2 || 2;
   const yStart = Math.floor(yMin / yStep) * yStep;
   const yTicks = Array.from({ length: 5 }, (_, i) => yStart + i * yStep)
-    .filter(v => v >= yMin - yStep && v <= yMax + yStep)
-    .slice(0, 5);
+    .filter(v => v >= yMin - yStep && v <= yMax + yStep).slice(0, 5);
 
   const topBucket = polyData.buckets.length > 0
     ? polyData.buckets.reduce((a, b) => b.yesPrice > a.yesPrice ? b : a, polyData.buckets[0])
@@ -177,7 +166,6 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
           )}
         </div>
       )}
-
       <div style={{ marginTop:32 }}>
         <a href={wunderUrl} target="_blank" rel="noopener noreferrer"
           style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)", textDecoration:"none" }}>
