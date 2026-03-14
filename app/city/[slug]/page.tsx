@@ -19,15 +19,15 @@ function toDisplay(tempC: number, unit: "F"|"C"): number {
   return unit === "F" ? cToF(tempC) : Math.round(tempC * 10) / 10;
 }
 
-// Extract hour from "2026-03-14T09:59:00" or "2026-03-15T00:00:00"
-function extractHour(isoTime: string): number {
-  const m = isoTime.match(/T(\d{2}):/);
+// Extract hour from local ISO "2026-03-14T09:00:00" → 9
+function getHour(iso: string): number {
+  const m = iso.match(/T(\d{2}):/);
   return m ? parseInt(m[1], 10) : -1;
 }
 
-// Extract date from "2026-03-14T09:59:00"
-function extractDate(isoTime: string): string {
-  return isoTime.substring(0, 10);
+// Extract date from local ISO "2026-03-14T09:00:00" → "2026-03-14"
+function getDate(iso: string): string {
+  return iso.substring(0, 10);
 }
 
 export default async function CityPage({ params }: { params: Promise<{ slug: string }> }) {
@@ -46,26 +46,27 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
   const time = getLocalTime(safeCity.timezone, safeCity.tzAbbr);
   const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: safeCity.timezone });
 
-  // FORECAST (dashed backdrop): WU gives next 24 hours from now, no date filter needed
-  // Just use the hour slot. This covers both "same-day" and "next-day midnight rollover" cases.
+  // forecastHourly = WU next 24h → dashed backdrop
+  // Map by hour slot ONLY (no date filter) since WU spans midnight
+  // Last-write wins if same hour appears twice (rare edge case)
   const fcastMap = new Map<number, number>();
   for (const pt of weatherData.forecastHourly) {
-    const h = extractHour(pt.time);
+    const h = getHour(pt.time);
     if (h < 0) continue;
     if (!fcastMap.has(h)) fcastMap.set(h, toDisplay(pt.tempC, unit));
   }
 
-  // OBS (solid overlay): PWS hourly history — ONLY today's date in city timezone
+  // obsHourly = PWS real observations → solid white overlay
+  // PWS gives today's calendar date — filter by date to keep only today
   const obsMap = new Map<number, number>();
   for (const pt of weatherData.obsHourly) {
-    const h = extractHour(pt.time);
-    const d = extractDate(pt.time);
-    if (h < 0 || d !== todayStr) continue;
+    if (getDate(pt.time) !== todayStr) continue;
+    const h = getHour(pt.time);
+    if (h < 0) continue;
     if (!obsMap.has(h)) obsMap.set(h, toDisplay(pt.tempC, unit));
   }
 
-  // Build 24-point chart array
-  // Both use the same hour slot (0-23) so they overlay correctly on the chart
+  // Build 24-point array: h=0..23
   const chartData: ChartPoint[] = Array.from({ length: 24 }, (_, h) => {
     const point: ChartPoint = { hour: h };
     if (fcastMap.has(h)) point.forecast = fcastMap.get(h);
