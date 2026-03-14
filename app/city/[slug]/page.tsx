@@ -26,14 +26,21 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
 
   const weatherData = await fetchWeatherData(city);
   const tempDisplay = weatherData.current?.tempDisplay ?? 0;
-  const polyData = await fetchPolymarketData(city, tempDisplay);
+  const polyData    = await fetchPolymarketData(city, tempDisplay);
 
-  const current = weatherData.current;
+  const current  = weatherData.current;
   const forecast = weatherData.forecast;
-  const time = getLocalTime(city.timezone, city.tzAbbr);
+  const time     = getLocalTime(city.timezone, city.tzAbbr);
+
   const hourlyTemps = weatherData.hourly.slice(0,24).map(h =>
     city.unit==="F" ? Math.round((h.tempC*9/5)+32) : Math.round(h.tempC)
   );
+
+  // Top bucket = highest yesPrice (most likely outcome)
+  const topBucket = polyData.buckets.length > 0
+    ? polyData.buckets.reduce((a, b) => b.yesPrice > a.yesPrice ? b : a, polyData.buckets[0])
+    : null;
+
   const wunderUrl = `https://www.wunderground.com/history/daily/${city.wundergroundSlug}`;
 
   return (
@@ -46,14 +53,35 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
           <span style={{ fontSize:13, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{city.station}</span>
           <span style={{ fontSize:13, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{time}</span>
         </div>
-        <div style={{ fontFamily:"monospace", fontSize:"clamp(72px,10vw,96px)", lineHeight:1, fontWeight:300, color:"var(--color-data)", marginTop:12 }}>
-          {current ? current.tempDisplay : "—"}
-          <span style={{ fontSize:"clamp(32px,4vw,48px)", color:"var(--color-text-secondary)" }}>°{city.unit}</span>
+
+        {/* Big temperature */}
+        <div style={{ display:"flex", alignItems:"flex-end", gap:16, marginTop:12 }}>
+          <div style={{ fontFamily:"monospace", fontSize:"clamp(72px,10vw,96px)", lineHeight:1, fontWeight:300, color:"var(--color-data)" }}>
+            {current ? current.tempDisplay : "—"}
+            <span style={{ fontSize:"clamp(32px,4vw,48px)", color:"var(--color-text-secondary)" }}>°{city.unit}</span>
+          </div>
+          {/* Top bucket badge next to temperature */}
+          {topBucket && (
+            <div style={{ marginBottom:8, display:"flex", flexDirection:"column", gap:2 }}>
+              <span style={{ fontSize:14, fontFamily:"monospace", color:"var(--color-accent)", fontWeight:600, lineHeight:1 }}>
+                {topBucket.label}
+              </span>
+              <span style={{ fontSize:14, fontFamily:"monospace", color:"var(--color-accent)", lineHeight:1 }}>
+                {Math.round(topBucket.yesPrice * 100)}¢
+              </span>
+            </div>
+          )}
         </div>
-        {current && <div style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)", marginTop:4 }}>observed at {current.observedAt}</div>}
+
+        {current && (
+          <div style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)", marginTop:4 }}>
+            observed at {current.observedAt}
+          </div>
+        )}
       </header>
 
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 48px" }}>
+        {/* Sparkline */}
         <div>
           <h2 style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", fontWeight:400, marginBottom:16 }}>Temperature</h2>
           {hourlyTemps.length > 1 ? (
@@ -65,15 +93,20 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
                 <span>12 AM</span><span>6 AM</span><span>12 PM</span><span>6 PM</span><span>9 PM</span>
               </div>
             </div>
-          ) : <div style={{ fontSize:11, color:"var(--color-text-tertiary)", padding:"16px 0" }}>No hourly data</div>}
+          ) : (
+            <div style={{ fontSize:11, color:"var(--color-text-tertiary)", padding:"16px 0" }}>No hourly data</div>
+          )}
         </div>
+
+        {/* Market */}
         <div>
           <MarketChart buckets={polyData.buckets} eventUrl={polyData.eventUrl} />
         </div>
       </div>
 
+      {/* High/Low + METAR */}
       {forecast && (
-        <div style={{ marginTop:40, paddingTop:24, display:"flex", gap:32, borderTop:"1px solid var(--color-rule)" }}>
+        <div style={{ marginTop:40, paddingTop:24, display:"flex", gap:32, borderTop:"1px solid var(--color-rule)", flexWrap:"wrap" }}>
           <div>
             <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", marginBottom:4 }}>Today High</div>
             <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"var(--color-data)" }}>{Math.round(forecast.maxDisplay)}°{city.unit}</div>
@@ -92,7 +125,10 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
       )}
 
       <div style={{ marginTop:32 }}>
-        <a href={wunderUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)", textDecoration:"none" }}>history on wunderground ↗</a>
+        <a href={wunderUrl} target="_blank" rel="noopener noreferrer"
+          style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)", textDecoration:"none" }}>
+          history on wunderground ↗
+        </a>
       </div>
     </main>
   );
