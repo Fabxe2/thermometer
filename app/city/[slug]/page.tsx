@@ -6,11 +6,7 @@ import { fetchPolymarketData } from "@/lib/polymarket";
 import Sparkline from "../../components/Sparkline";
 import MarketChart from "../../components/MarketChart";
 
-export const revalidate = 60; // revalida cada 60 segundos
-
-export async function generateStaticParams() {
-  return CITIES.map(c => ({ slug: c.slug }));
-}
+export const dynamic = "force-dynamic"; // SSR puro en Railway
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
@@ -53,7 +49,6 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
   return (
     <main style={{ maxWidth:960, margin:"0 auto", padding:"32px 24px", minHeight:"100vh" }}>
       <Link href="/" style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.1em", color:"var(--color-text-tertiary)", textDecoration:"none" }}>← All Cities</Link>
-
       <header style={{ marginTop:24, marginBottom:32, paddingBottom:24, borderBottom:"1px solid var(--color-rule)" }}>
         <div style={{ display:"flex", alignItems:"baseline", gap:12, marginBottom:4 }}>
           <h1 style={{ fontSize:22, textTransform:"uppercase", letterSpacing:"0.05em", color:"var(--color-text-primary)", margin:0, fontWeight:400 }}>{safeCity.name}</h1>
@@ -66,9 +61,7 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
         </div>
         {current && (
           <div style={{ display:"flex", alignItems:"center", gap:16, marginTop:6 }}>
-            <span style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>
-              observed at {current.observedAt}
-            </span>
+            <span style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>observed at {current.observedAt}</span>
             {topBucket && (
               <span style={{ fontSize:12, fontFamily:"monospace", color:"var(--color-accent)", fontWeight:500 }}>
                 {labelWithUnit(topBucket.label)} {Math.round(topBucket.yesPrice * 100)}¢
@@ -77,7 +70,6 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
           </div>
         )}
       </header>
-
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"0 48px" }}>
         <div>
           <h2 style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", fontWeight:400, marginBottom:16 }}>Temperature</h2>
@@ -90,15 +82,12 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
                 <span>12 AM</span><span>6 AM</span><span>12 PM</span><span>6 PM</span><span>9 PM</span>
               </div>
             </div>
-          ) : (
-            <div style={{ fontSize:11, color:"var(--color-text-tertiary)", padding:"16px 0" }}>No hourly data</div>
-          )}
+          ) : <div style={{ fontSize:11, color:"var(--color-text-tertiary)", padding:"16px 0" }}>No hourly data</div>}
         </div>
         <div>
           <MarketChart buckets={polyData.buckets} eventUrl={polyData.eventUrl} unit={unit} />
         </div>
       </div>
-
       {forecast && (
         <div style={{ marginTop:40, paddingTop:24, display:"flex", gap:32, borderTop:"1px solid var(--color-rule)", flexWrap:"wrap" }}>
           <div>
@@ -118,10 +107,7 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
         </div>
       )}
       <div style={{ marginTop:32 }}>
-        <a href={wunderUrl} target="_blank" rel="noopener noreferrer"
-          style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)", textDecoration:"none" }}>
-          history on wunderground ↗
-        </a>
+        <a href={wunderUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)", textDecoration:"none" }}>history on wunderground ↗</a>
       </div>
     </main>
   );
