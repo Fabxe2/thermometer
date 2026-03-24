@@ -217,7 +217,8 @@ async function fetchOMObsHistory(city: City): Promise<HourlyPoint[]> {
 
 // ── Helpers de unidad ─────────────────────────────────────────────────────
 function applyUnit(obs: WeatherObs, city: City): WeatherObs {
-  obs.tempDisplay = city.unit === 'F' ? cToF(obs.tempC) : Math.round(obs.tempC * 10) / 10;
+  const rawDisplay = city.unit === 'F' ? cToF(obs.tempC) : Math.round(obs.tempC * 10) / 10;
+  obs.tempDisplay = isNaN(rawDisplay) ? obs.tempC : rawDisplay;
   obs.unit = city.unit;
   return obs;
 }
