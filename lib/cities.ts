@@ -16,9 +16,9 @@ export const CITIES: City[] = [
   { name:'Buenos Aires', slug:'buenos-aires', station:'SAEZ', lat:-34.82, lon:-58.53,  unit:'C', timezone:'America/Argentina/Buenos_Aires', tzAbbr:'ART',  region:'intl', wundergroundSlug:'SAEZ' },
   { name:'Seoul',        slug:'seoul',        station:'RKSI', lat:37.46,  lon:126.44,  unit:'C', timezone:'Asia/Seoul',                     tzAbbr:'KST',  region:'intl', wundergroundSlug:'RKSI' },
   { name:'Ankara',       slug:'ankara',       station:'LTAC', lat:40.13,  lon:32.99,   unit:'C', timezone:'Europe/Istanbul',                tzAbbr:'TRT',  region:'intl', wundergroundSlug:'LTAC' },
-  { name:'Milan',        slug:'milan',        station:'LIMC', lat:45.63,  lon:8.72,    unit:'C', timezone:'Europe/Rome',                    tzAbbr:'CET',  region:'intl', wundergroundSlug:'LIMC' },
-  { name:'Madrid',       slug:'madrid',       station:'LEMD', lat:40.47,  lon:-3.55,   unit:'C', timezone:'Europe/Madrid',                  tzAbbr:'CET',  region:'intl', wundergroundSlug:'LEMD' },
   { name:'Wellington',   slug:'wellington',   station:'NZWN', lat:-41.33, lon:174.81,  unit:'C', timezone:'Pacific/Auckland',               tzAbbr:'NZST', region:'intl', pwsId:'IWELLI216',    wundergroundSlug:'NZWN' },
+  { name:'São Paulo',    slug:'sao-paulo',    station:'SBGR', lat:-23.43, lon:-46.47,  unit:'C', timezone:'America/Sao_Paulo',              tzAbbr:'BRT',  region:'intl', wundergroundSlug:'SBGR' },
+  { name:'Paris',        slug:'paris',        station:'LFPG', lat:49.01,  lon:2.55,    unit:'C', timezone:'Europe/Paris',                   tzAbbr:'CET',  region:'intl', wundergroundSlug:'LFPG' },
 ];
 
 export function getCityBySlug(slug: string): City | undefined {
@@ -33,7 +33,3 @@ export function getLocalTime(timezone: string, abbr: string): string {
 
 export function cToF(c: number): number { return Math.round(c * 9 / 5 + 32); }
 export function fToC(f: number): number { return (f - 32) * 5 / 9; }
-
-export function applyUnit(c: number, unit: 'F' | 'C'): number {
-  return unit === 'F' ? cToF(c) : Math.round(c);
-}
