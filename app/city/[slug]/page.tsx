@@ -1,117 +1,147 @@
-import { notFound } from 'next/navigation';
-import type { Metadata } from 'next';
-import { getCityBySlug, getLocalTime, CITIES } from '../../../lib/cities';
-import { getWeatherData } from '../../../lib/weather';
-import { getCityMarkets } from '../../../lib/polymarket';
-import Sparkline from '../../components/Sparkline';
-import MarketChart from '../../components/MarketChart';
+import { notFound } from "next/navigation";
+import Link from "next/link";
+import { getCityBySlug, getLocalTime, CITIES, cToF } from "@/lib/cities";
+import { fetchWeatherData } from "@/lib/weather";
+import { fetchPolymarketData } from "@/lib/polymarket";
+import Sparkline, { ChartPoint } from "../../components/Sparkline";
+import MarketChart from "../../components/MarketChart";
+
+export const dynamic = "force-dynamic";
 
 export async function generateStaticParams() {
   return CITIES.map(c => ({ slug: c.slug }));
 }
 
-export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const city = getCityBySlug(slug);
-  return { title: city ? city.name + ' – thermometer' : 'thermometer' };
+  if (!city) return {};
+  return { title: city.name + " – thermometer" };
 }
 
-const S: Record<string, React.CSSProperties> = {
-  page: { maxWidth: 720, margin: '0 auto', padding: '24px 16px 48px' },
-  back: { display: 'inline-block', marginBottom: 20, fontSize: 13, color: 'var(--muted)', textDecoration: 'none' },
-  header: { marginBottom: 24 },
-  cityName: { fontSize: 28, fontWeight: 600, letterSpacing: -0.5 },
-  meta: { fontSize: 13, color: 'var(--muted)', marginTop: 2 },
-  tempRow: { display: 'flex', alignItems: 'baseline', gap: 10, margin: '12px 0 4px' },
-  currentTemp: { fontSize: 52, fontWeight: 300, lineHeight: 1 },
-  unit: { fontSize: 20, color: 'var(--muted)' },
-  obsLabel: { fontSize: 12, color: 'var(--muted)' },
-  statRow: { display: 'flex', gap: 20, fontSize: 13, color: 'var(--muted)', marginBottom: 24 },
-  section: { marginBottom: 32 },
-  sectionLabel: { fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 12 },
-  rawMetar: { fontFamily: 'monospace', fontSize: 11, color: 'var(--faint)', marginTop: 16, wordBreak: 'break-all' },
-  wunderLink: { fontSize: 12, color: 'var(--muted)', marginTop: 8, display: 'inline-block' },
-};
+function toDisplay(tempC: number, unit: "F"|"C"): number {
+  return unit === "F" ? cToF(tempC) : Math.round(tempC * 10) / 10;
+}
+function getHour(iso: string): number {
+  const m = iso.match(/T(\d{2}):/);
+  return m ? parseInt(m[1], 10) : -1;
+}
+function getDate(iso: string): string { return iso.substring(0, 10); }
 
 export default async function CityPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const city = getCityBySlug(slug);
   if (!city) notFound();
+  const safeCity = city!;
+  const unit = safeCity.unit;
 
-  const [weather, { markets }] = await Promise.all([
-    getWeatherData(city),
-    getCityMarkets(city.name, city.station),
-  ]);
+  const weatherData = await fetchWeatherData(safeCity);
+  const currentTempDisplay = weatherData.current != null
+    ? (weatherData.current.tempDisplay ?? toDisplay(weatherData.current.tempC, unit))
+    : null;
 
-  const localTime = getLocalTime(city.timezone, city.tzAbbr);
+  const polyData = await fetchPolymarketData(safeCity, currentTempDisplay ?? 0);
+  const current = weatherData.current;
+  const forecast = weatherData.forecast;
+  const time = getLocalTime(safeCity.timezone, safeCity.tzAbbr);
+  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: safeCity.timezone });
 
-  // Hora actual decimal local para la línea vertical del chart
-  const nowDate = new Date();
-  const timeParts = nowDate.toLocaleString('en-US', {
-    timeZone: city.timezone, hour: '2-digit', minute: '2-digit', hour12: false
-  }).split(':').map(Number);
-  const currentHour = timeParts[0] + timeParts[1] / 60;
+  const fcastMap = new Map<number, number>();
+  for (const pt of weatherData.forecastHourly) {
+    const h = getHour(pt.time);
+    if (h < 0) continue;
+    if (!fcastMap.has(h)) fcastMap.set(h, toDisplay(pt.tempC, unit));
+  }
+
+  const obsMap = new Map<number, number>();
+  for (const pt of weatherData.obsHourly) {
+    if (getDate(pt.time) !== todayStr) continue;
+    const h = getHour(pt.time);
+    if (h < 0) continue;
+    if (!obsMap.has(h)) obsMap.set(h, toDisplay(pt.tempC, unit));
+  }
+
+  const chartData: ChartPoint[] = Array.from({ length: 24 }, (_, h) => {
+    const point: ChartPoint = { hour: h };
+    if (fcastMap.has(h)) point.forecast = fcastMap.get(h);
+    if (obsMap.has(h)) point.observed = obsMap.get(h);
+    return point;
+  });
+
+  const topBucket = polyData.buckets.length > 0
+    ? polyData.buckets.reduce((a, b) => b.yesPrice > a.yesPrice ? b : a, polyData.buckets[0])
+    : null;
+
+  function labelWithUnit(label: string): string {
+    if (!label || label.includes('F') || label.includes('C')) return label;
+    if (label.includes('deg')) return label.replace('deg', 'deg' + unit);
+    return label;
+  }
+
+  const wunderUrl = `https://www.wunderground.com/forecast/${safeCity.wundergroundSlug}`;
 
   return (
-    <main style={S.page}>
-      <a href="/" style={S.back}>← All Cities</a>
+    <main style={{ maxWidth:720, margin:"0 auto", padding:"32px 24px", minHeight:"100vh" }}>
+      <Link href="/" style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.1em", color:"var(--color-text-tertiary)", textDecoration:"none" }}>
+        arrow All Cities
+      </Link>
 
-      <div style={S.header}>
-        <div style={S.cityName}>{city.name}</div>
-        <div style={S.meta}>{city.station} · {localTime}</div>
-
-        <div style={S.tempRow}>
-          <span style={S.currentTemp}>{weather.currentTemp}</span>
-          <span style={S.unit}>°{city.unit}</span>
-          <span style={S.obsLabel}>observed at {localTime}</span>
+      <header style={{ marginTop:24, marginBottom:32, paddingBottom:24, borderBottom:"1px solid var(--color-rule)" }}>
+        <div style={{ display:"flex", alignItems:"baseline", gap:12, marginBottom:4 }}>
+          <h1 style={{ fontSize:22, textTransform:"uppercase", letterSpacing:"0.05em", color:"var(--color-text-primary)", margin:0, fontWeight:400 }}>{safeCity.name}</h1>
+          <span style={{ fontSize:13, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{safeCity.station}</span>
+          <span style={{ fontSize:13, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{time}</span>
         </div>
-
-        <div style={S.statRow}>
-          <span>High <strong style={{ color: '#fff' }}>{weather.highToday}°{city.unit}</strong></span>
-          <span>Low <strong style={{ color: '#fff' }}>{weather.lowToday}°{city.unit}</strong></span>
-          <span>Spread <strong style={{ color: '#fff' }}>{weather.spread}°C</strong></span>
-          <span>Wind <strong style={{ color: '#fff' }}>{weather.windKt}kt</strong></span>
-          <span style={{ color: weather.confidence >= 70 ? '#4ade80' : weather.confidence >= 45 ? '#facc15' : '#f87171' }}>
-            Conf {weather.confidence}%
-          </span>
+        <div style={{ fontFamily:"monospace", fontSize:"clamp(64px,9vw,88px)", lineHeight:1, fontWeight:300, color:"var(--color-data)", marginTop:12 }}>
+          {currentTempDisplay != null ? currentTempDisplay : "---"}
+          <span style={{ fontSize:"clamp(28px,4vw,42px)", color:"var(--color-text-secondary)" }}>deg{unit}</span>
         </div>
+        {current && (
+          <div style={{ display:"flex", alignItems:"center", gap:16, marginTop:6 }}>
+            <span style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>observed at {current.observedAt}</span>
+            {topBucket && (
+              <span style={{ fontSize:12, fontFamily:"monospace", color:"var(--color-accent)", fontWeight:500 }}>
+                {labelWithUnit(topBucket.label)} {Math.round(topBucket.yesPrice * 100)}c
+              </span>
+            )}
+          </div>
+        )}
+      </header>
+
+      <div style={{ marginBottom:40 }}>
+        <h2 style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", fontWeight:400, marginBottom:12 }}>Temperature</h2>
+        <Sparkline data={chartData} height={300} />
       </div>
 
-      {/* Sparkline — Fases 1+2 */}
-      <div style={S.section}>
-        <div style={S.sectionLabel}>Temperature</div>
-        <Sparkline
-          obsPoints={weather.obsPoints}
-          forecastPoints={weather.forecastPoints}
-          unit={city.unit}
-          projectedMax={weather.projectedMax}
-          projectedMaxHour={weather.projectedMaxHour}
-          confidence={weather.confidence}
-          sigma={weather.sigma}
-          currentHour={currentHour}
-        />
+      <div style={{ marginBottom:40, minHeight:240 }}>
+        <MarketChart buckets={polyData.buckets} eventUrl={polyData.eventUrl} unit={unit} />
       </div>
 
-      {/* Mercados Polymarket */}
-      {markets.length > 0 && (
-        <div style={S.section}>
-          <div style={S.sectionLabel}>Market ↗</div>
-          {markets.slice(0, 3).map(m => (
-            <MarketChart key={m.id} tokens={m.tokens} question={m.question} link={m.link} />
-          ))}
+      {forecast && (
+        <div style={{ paddingTop:24, display:"flex", gap:32, borderTop:"1px solid var(--color-rule)", flexWrap:"wrap" }}>
+          <div>
+            <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", marginBottom:4 }}>Today High</div>
+            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"var(--color-data)" }}>{Math.round(forecast.maxDisplay)}deg{unit}</div>
+          </div>
+          <div>
+            <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", marginBottom:4 }}>Today Low</div>
+            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"var(--color-data)" }}>{Math.round(forecast.minDisplay)}deg{unit}</div>
+          </div>
+          {current?.rawMetar && (
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", marginBottom:4 }}>Raw METAR</div>
+              <div style={{ fontSize:10, fontFamily:"monospace", color:"var(--color-text-tertiary)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{current.rawMetar}</div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* METAR raw */}
-      <div style={S.rawMetar}>
-        Raw METAR<br />{weather.rawMetar}
+      <div style={{ marginTop:32 }}>
+        <a href={wunderUrl} target="_blank" rel="noopener noreferrer"
+          style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)", textDecoration:"none" }}>
+          history on wunderground up-right
+        </a>
       </div>
-      <a
-        href={`https://www.wunderground.com/forecast/${city.station}`}
-        target="_blank" rel="noreferrer" style={S.wunderLink}
-      >
-        history on wunderground ↗
-      </a>
     </main>
   );
 }
