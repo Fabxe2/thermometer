@@ -1,40 +1,31 @@
-'use client';
-import { BarChart, Bar, XAxis, YAxis, Cell, ReferenceLine, ResponsiveContainer, Tooltip } from 'recharts';
+"use client";
+import { Bucket } from "../../lib/polymarket";
 
-type Token = { outcome: string; price: number };
-type Props = { tokens: Token[]; question: string; link: string };
+type Props = { buckets: Bucket[]; eventUrl: string; unit: "F"|"C"; };
 
-export default function MarketChart({ tokens, question, link }: Props) {
-  if (!tokens.length) return null;
-  const sorted = [...tokens].sort((a, b) => b.price - a.price);
+export default function MarketChart({ buckets, eventUrl, unit }: Props) {
+  if (!buckets.length) return null;
+  const sorted = [...buckets].sort((a, b) => b.yesPrice - a.yesPrice);
   const max = sorted[0];
-
   return (
-    <div style={{ width: '100%' }}>
-      <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6, lineHeight: 1.4 }}>
-        <a href={link} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', textDecoration: 'none' }}>
-          {question} ↗
-        </a>
-      </div>
-      <ResponsiveContainer width="100%" height={200}>
-        <BarChart data={sorted} layout="vertical" margin={{ top: 0, right: 60, bottom: 0, left: 0 }}>
-          <XAxis type="number" domain={[0,100]} hide />
-          <YAxis type="category" dataKey="outcome" width={52}
-            tick={{ fill: 'var(--muted)', fontSize: 10 }} axisLine={false} tickLine={false} />
-          <ReferenceLine x={50} stroke="rgba(255,255,255,.1)" strokeWidth={1} />
-          <Tooltip
-            contentStyle={{ background: '#1a1a1a', border: '1px solid rgba(255,255,255,.1)', borderRadius: 6, fontSize: 11 }}
-            formatter={(v: number) => [`${v}¢`, 'Price']}
-          />
-          <Bar dataKey="price" radius={[0,3,3,0]}>
-            {sorted.map((t, i) => (
-              <Cell key={i} fill={t.outcome === max.outcome ? 'rgba(232,184,109,0.8)' : 'rgba(255,255,255,0.15)'} />
-            ))}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
-      <div style={{ textAlign: 'right', fontSize: 12, color: 'var(--accent)', marginTop: 4 }}>
-        <strong>{max.price}¢</strong> {max.outcome}
+    <div style={{ display:"flex", flexDirection:"column", height:"100%" }}>
+      <h2 style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", fontWeight:400, marginBottom:12 }}>
+        Market{eventUrl && <a href={eventUrl} target="_blank" rel="noopener noreferrer" style={{ marginLeft:6, fontSize:10, color:"var(--color-accent)", textDecoration:"none" }}>&#x2197;</a>}
+      </h2>
+      <div style={{ flex:1, display:"flex", flexDirection:"column", justifyContent:"space-around", gap:6 }}>
+        {sorted.map((b, i) => {
+          const pct = Math.round(b.yesPrice * 100);
+          const isTop = b === max;
+          return (
+            <div key={i} style={{ display:"flex", alignItems:"center", gap:8 }}>
+              <div style={{ fontSize:10, fontFamily:"monospace", color:"var(--color-text-tertiary)", minWidth:52, textAlign:"right", whiteSpace:"nowrap" }}>{b.label}</div>
+              <div style={{ flex:1, height:24, background:"rgba(255,255,255,0.06)", borderRadius:2, overflow:"hidden", position:"relative" }}>
+                <div style={{ height:"100%", width:pct+"%", background:isTop?"rgba(232,184,109,0.75)":"rgba(255,255,255,0.2)", borderRadius:2 }} />
+                <span style={{ position:"absolute", right:6, top:"50%", transform:"translateY(-50%)", fontSize:10, fontFamily:"monospace", color:isTop?"var(--color-accent)":"var(--color-text-secondary)", fontWeight:isTop?600:400 }}>{pct}c</span>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
