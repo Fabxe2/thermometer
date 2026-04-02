@@ -1,351 +1,174 @@
-// lib/weather.ts
-// Modelo DTC (Diurnal Temperature Cycle) de dos fases — GOT01 adaptado a METAR
-// Fase 1 (diurna):   T(t) = T0 + Ta * cos(pi * (t - tm) / omega)
-// Fase 2 (nocturna): T(t) = (T(ts) - Tinf) * exp(-k * (t - ts)) + Tinf
-//
-// Parámetros calibrados en tiempo real con cada METAR entrante:
-//   T0   = temp al amanecer (METAR más cercano al sunrise)
-//   Ta   = amplitud = Tmax_TAF - T0
-//   tm   = hora del pico solar (ajustada por nubosidad y viento)
-//   omega= semiperíodo solar (función de latitud y DOY)
-//   ts   = inicio decaimiento = sunset + 0.5h
-//   k    = constante de enfriamiento = f(spread T/Td)
-//   Tinf = temperatura de equilibrio nocturno ≈ Td + 1°C
+import { City, cToF } from "./cities";
 
-import type { City } from './cities';
-import { cToF } from './cities';
-
-// ─── TIPOS ────────────────────────────────────────────────────────────────────
-
-export type ObsPoint = {
-  hour: number;        // hora local 0-23
-  temp: number;        // temp en la unidad de la ciudad
-  isObs: true;
+export type WeatherObs = {
+  tempC: number; tempDisplay: number; unit: "F"|"C"; station: string;
+  observedAt: string; observedISO: string; windSpeed: number|null;
+  windDir: number|null; cloudCover: string|null; pressure: number|null;
+  dewpoint: number|null; rawMetar: string|null; source: string;
+};
+export type HourlyPoint = { time: string; tempC: number; };
+export type ForecastDay = { maxC: number; minC: number; maxDisplay: number; minDisplay: number; };
+export type WeatherData = {
+  current: WeatherObs|null;
+  obsHourly: HourlyPoint[];
+  forecastHourly: HourlyPoint[];
+  forecast: ForecastDay|null;
 };
 
-export type ForecastPoint = {
-  hour: number;
-  temp: number;        // forecast central (DTC)
-  upper: number;       // banda superior +sigma
-  lower: number;       // banda inferior -sigma
-  isForecast: true;
-};
+const WU_KEY = process.env.WU_API_KEY || '';
 
-export type ChartPoint = ObsPoint | ForecastPoint;
-
-export type WeatherResult = {
-  currentTemp: number;       // en unidad de la ciudad
-  highToday: number;
-  lowToday: number;
-  projectedMax: number;      // pico proyectado por DTC
-  projectedMaxHour: number;  // hora local del pico
-  confidence: number;        // 0-100
-  sigma: number;             // incertidumbre en grados
-  spread: number;            // T - Td en °C
-  cloudCover: string;        // 'CLR' | 'FEW' | 'SCT' | 'BKN' | 'OVC'
-  windKt: number;
-  rawMetar: string;
-  obsPoints: ObsPoint[];
-  forecastPoints: ForecastPoint[];
-};
-
-// ─── CONSTANTES SOLAR ─────────────────────────────────────────────────────────
-
-function dayOfYear(d: Date): number {
-  const start = new Date(d.getFullYear(), 0, 0);
-  return Math.floor((d.getTime() - start.getTime()) / 86400000);
+function parseTempFromMetar(metar: string): number | null {
+  const tg = metar.match(/\bT([01])(\d{3})[01]\d{3}\b/);
+  if (tg) { const s = tg[1]==='1'?-1:1; return s*parseInt(tg[2],10)/10; }
+  const m = metar.match(/\b(M?\d{2})\/M?\d{2}\b/);
+  if (!m) return null;
+  return m[1].startsWith('M') ? -parseInt(m[1].slice(1),10) : parseInt(m[1],10);
+}
+function parseWindFromMetar(metar: string) {
+  const m = metar.match(/(\d{3})(\d{2,3})KT/);
+  return m ? { dir:parseInt(m[1],10), speed:parseInt(m[2],10) } : { dir:null, speed:null };
+}
+function parsePressureFromMetar(metar: string): number|null {
+  const q = metar.match(/Q(\d{4})/); if (q) return parseInt(q[1],10);
+  const a = metar.match(/A(\d{4})/); if (a) return Math.round(parseInt(a[1],10)*0.03386); return null;
+}
+function parseCloudFromMetar(metar: string): string|null {
+  return metar.match(/(CLR|SKC|CAVOK|FEW|SCT|BKN|OVC)/)?.[1]??null;
 }
 
-function solarDeclinationRad(doy: number): number {
-  // Spencer 1971
-  const B = (2 * Math.PI * (doy - 1)) / 365;
-  return 0.006918 - 0.399912 * Math.cos(B) + 0.070257 * Math.sin(B)
-       - 0.006758 * Math.cos(2*B) + 0.000907 * Math.sin(2*B);
-}
-
-/** Retorna hora solar de amanecer y anochecer (horas decimales locales) */
-function sunriseSunset(lat: number, lon: number, date: Date, tz: string): { sunrise: number; sunset: number } {
-  const doy = dayOfYear(date);
-  const latRad = lat * Math.PI / 180;
-  const decl = solarDeclinationRad(doy);
-  const cosHa = -Math.tan(latRad) * Math.tan(decl);
-  const ha = Math.acos(Math.max(-1, Math.min(1, cosHa))) * 180 / Math.PI;
-  // Equation of time (minutes)
-  const B = (2 * Math.PI * (doy - 81)) / 364;
-  const eot = 9.87 * Math.sin(2*B) - 7.53 * Math.cos(B) - 1.5 * Math.sin(B);
-  // Longitude correction (minutes)
-  const stdMeridian = Math.round(lon / 15) * 15;
-  const lonCorr = 4 * (lon - stdMeridian);
-  const offset = (eot + lonCorr) / 60;
-  // Get actual UTC offset from timezone name
-  const utcOffsetH = getUtcOffsetH(tz, date);
-  const solarNoon = 12 - offset + (stdMeridian - lon)/15 - utcOffsetH + utcOffsetH;
-  return {
-    sunrise: 12 - ha/15 - offset - (lon - stdMeridian)/15,
-    sunset:  12 + ha/15 - offset - (lon - stdMeridian)/15,
-  };
-}
-
-function getUtcOffsetH(tz: string, date: Date): number {
-  const utc = date.toLocaleString('en-US', { timeZone: 'UTC', hour12: false, hour: '2-digit', minute: '2-digit' });
-  const local = date.toLocaleString('en-US', { timeZone: tz,  hour12: false, hour: '2-digit', minute: '2-digit' });
-  const toMin = (s: string) => { const [h,m] = s.split(':').map(Number); return h*60+m; };
-  return (toMin(local) - toMin(utc)) / 60;
-}
-
-function localHour(date: Date, tz: string): number {
-  const s = date.toLocaleString('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
-  const [h, m] = s.split(':').map(Number);
-  return h + m / 60;
-}
-
-// ─── FETCH METAR ──────────────────────────────────────────────────────────────
-
-type MetarObs = {
-  temp: number; dewp: number; wspd: number; wdir: number;
-  clouds: string; wxString: string; rawOb: string; obsTime: string;
-};
-
-async function fetchMetarHistory(station: string): Promise<MetarObs[]> {
-  const url = `https://aviationweather.gov/api/data/metar?ids=${station}&format=json&hours=24`;
-  const res = await fetch(url, { next: { revalidate: 180 } });
-  if (!res.ok) return [];
-  const data: Record<string, unknown>[] = await res.json();
-  return data
-    .filter(m => m.temp != null)
-    .map(m => ({
-      temp:      Number(m.temp),
-      dewp:      m.dewp != null ? Number(m.dewp) : Number(m.temp) - 10,
-      wspd:      Number(m.wspd ?? 0),
-      wdir:      Number(m.wdir ?? 0),
-      clouds:    (m.clouds as {cover:string}[] | undefined)?.map(c => c.cover).join(' ') ?? 'CLR',
-      wxString:  String(m.wxString ?? ''),
-      rawOb:     String(m.rawOb ?? ''),
-      obsTime:   String(m.reportTime ?? m.obsTime ?? ''),
-    }))
-    .sort((a, b) => new Date(a.obsTime).getTime() - new Date(b.obsTime).getTime());
-}
-
-async function fetchTAFMax(station: string): Promise<number | null> {
+async function fetchTgftpMetar(station: string, timezone: string): Promise<WeatherObs|null> {
   try {
-    const res = await fetch(`https://aviationweather.gov/api/data/taf?ids=${station}&format=json&time=valid`, { next: { revalidate: 1800 } });
+    const res = await fetch(
+      `https://tgftp.nws.noaa.gov/data/observations/metar/stations/${station}.TXT`,
+      { cache: 'no-store' }
+    );
     if (!res.ok) return null;
-    const data = await res.json();
-    if (!data?.length) return null;
-    const taf = data[0];
-    let txMax: number | null = null;
-    for (const line of (taf.fcsts ?? [])) {
-      if (line.maxTemp != null && (txMax === null || line.maxTemp > txMax)) txMax = line.maxTemp;
+    const lines = (await res.text()).trim().split('\n');
+    const rawMetar = lines[1]?.trim()??lines[0]?.trim()??'';
+    if (!rawMetar) return null;
+    const tempC = parseTempFromMetar(rawMetar); if (tempC==null) return null;
+    const {speed,dir} = parseWindFromMetar(rawMetar);
+    const tm = rawMetar.match(/\b(\d{2})(\d{2})(\d{2})Z\b/);
+    let observedAt='', observedISO=new Date().toISOString();
+    if (tm) {
+      const now=new Date();
+      const obs=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),parseInt(tm[1],10),parseInt(tm[2],10),parseInt(tm[3],10)));
+      observedISO=obs.toISOString();
+      observedAt=obs.toLocaleTimeString('en-US',{timeZone:timezone,hour:'numeric',minute:'2-digit',hour12:true});
     }
-    if (txMax === null && taf.rawTAF) {
-      const m = (taf.rawTAF as string).match(/TX(M?[\d]+)\/([\d]+Z)/);
-      if (m) txMax = m[1].startsWith('M') ? -parseInt(m[1].slice(1)) : parseInt(m[1]);
-    }
-    return txMax;
+    return { tempC, tempDisplay:tempC, unit:'C', station, observedAt, observedISO,
+      windSpeed:speed, windDir:dir, cloudCover:parseCloudFromMetar(rawMetar),
+      pressure:parsePressureFromMetar(rawMetar), dewpoint:null, rawMetar, source:'tgftp' };
   } catch { return null; }
 }
 
-// ─── MODELO DTC — DOS FASES ───────────────────────────────────────────────────
-
-type DtcParams = {
-  T0: number;    // temp al amanecer (°C)
-  Ta: number;    // amplitud (°C)
-  tm: number;    // hora del pico (h decimal)
-  omega: number; // semiperíodo solar (h)
-  ts: number;    // inicio decaimiento nocturno (h)
-  k: number;     // constante de enfriamiento (h⁻¹)
-  Tinf: number;  // temp equilibrio nocturno (°C)
-};
-
-function dtcTemperature(t: number, p: DtcParams): number {
-  // t: hora decimal local 0-24
-  if (t <= p.ts) {
-    // FASE DIURNA — coseno centrado en tm
-    return p.T0 + p.Ta * Math.cos(Math.PI * (t - p.tm) / p.omega);
-  } else {
-    // FASE NOCTURNA — decaimiento exponencial tipo Newton
-    const Tts = p.T0 + p.Ta * Math.cos(Math.PI * (p.ts - p.tm) / p.omega);
-    return (Tts - p.Tinf) * Math.exp(-p.k * (t - p.ts)) + p.Tinf;
-  }
-}
-
-function buildDtcParams(
-  sunrise: number,
-  sunset: number,
-  T0: number,
-  Tmax: number,
-  dewpNow: number,
-  cloudCover: string,
-  windKt: number
-): DtcParams {
-  const omega = (sunset - sunrise) * 0.5; // semiperíodo diurno
-
-  // tm: pico solar ajustado por nubes y viento
-  let tmOffset = 0;
-  if (cloudCover.includes('OVC') || cloudCover.includes('BKN')) tmOffset += 0.5;
-  if (windKt > 20) tmOffset += 0.3;
-  const tm = (sunrise + sunset) / 2 + 1.0 + tmOffset; // pico ~1-1.5h después del mediodía solar
-
-  const Ta = Math.max(0, Tmax - T0);
-  const ts = sunset + 0.5;
-
-  // k: constante de enfriamiento calibrada por spread T/Td
-  const spread = T0 - dewpNow;
-  let k: number;
-  if      (spread >= 15) k = 0.35;  // muy seco → enfriamiento rápido
-  else if (spread >= 10) k = 0.25;
-  else if (spread >= 5)  k = 0.18;
-  else                   k = 0.12;  // muy húmedo → retiene calor
-
-  // Tinf: temperatura de equilibrio nocturno
-  const Tinf = dewpNow + 1.5;
-
-  return { T0, Ta, tm, omega, ts, k, Tinf };
-}
-
-// ─── INCERTIDUMBRE ────────────────────────────────────────────────────────────
-
-function calcSigma(
-  spread: number,
-  cloudCover: string,
-  hoursToMax: number,
-  tafAvailable: boolean,
-  observedRateStable: boolean,
-): number {
-  // sigma base crece con las horas restantes
-  let sigma = 0.5 + hoursToMax * 0.12;
-
-  // nubes aumentan incertidumbre
-  if (cloudCover.includes('OVC'))       sigma += 1.2;
-  else if (cloudCover.includes('BKN')) sigma += 0.8;
-  else if (cloudCover.includes('SCT')) sigma += 0.4;
-
-  // spread bajo = más húmedo = más incierto
-  if (spread < 3) sigma += 0.8;
-  else if (spread < 6) sigma += 0.4;
-
-  if (tafAvailable)       sigma *= 0.80;  // TAF disponible reduce incertidumbre
-  if (observedRateStable) sigma *= 0.90;
-
-  return Math.max(0.3, Math.min(3.5, sigma));
-}
-
-function calcConfidence(
-  spread: number,
-  cloudCover: string,
-  hoursToMax: number,
-  tafAvailable: boolean,
-  observedRateStable: boolean
-): number {
-  let score = 60;
-  if (spread >= 10) score += 15;
-  else if (spread >= 5) score += 8;
-  else score -= 10;
-
-  if (cloudCover === 'CLR' || cloudCover === 'FEW') score += 12;
-  else if (cloudCover.includes('SCT')) score += 4;
-  else if (cloudCover.includes('BKN')) score -= 8;
-  else if (cloudCover.includes('OVC')) score -= 18;
-
-  if (hoursToMax < 1) score += 15;
-  else if (hoursToMax < 3) score += 8;
-  else if (hoursToMax > 6) score -= 8;
-
-  if (tafAvailable) score += 10;
-  if (observedRateStable) score += 5;
-
-  return Math.max(5, Math.min(98, score));
-}
-
-// ─── FUNCIÓN PRINCIPAL ────────────────────────────────────────────────────────
-
-export async function getWeatherData(city: City): Promise<WeatherResult> {
-  const now = new Date();
-  const metarList = await fetchMetarHistory(city.station);
-  const tafMax = await fetchTAFMax(city.station);
-
-  if (!metarList.length) throw new Error('No METAR data for ' + city.station);
-
-  const latest = metarList[metarList.length - 1];
-  const { sunrise, sunset } = sunriseSunset(city.lat, city.lon, now, city.timezone);
-  const nowH = localHour(now, city.timezone);
-
-  // Temperatura de amanecer: METAR más cercano a sunrise
-  const sunriseObs = metarList.reduce((best, m) => {
-    const mH = localHour(new Date(m.obsTime), city.timezone);
-    return Math.abs(mH - sunrise) < Math.abs(localHour(new Date(best.obsTime), city.timezone) - sunrise) ? m : best;
-  }, metarList[0]);
-  const T0 = sunriseObs.temp;
-
-  // Tmax para el modelo: usar TAF si está disponible, si no usar máximo observado + proyección
-  const obsMax = Math.max(...metarList.map(m => m.temp));
-  const modelTmax = tafMax !== null ? Math.max(tafMax, obsMax) : obsMax + Math.max(0, (sunset - nowH) * 0.8);
-
-  // Parámetros del modelo DTC
-  const cloudNow = latest.clouds || 'CLR';
-  const spreadNow = latest.temp - latest.dewp;
-  const params = buildDtcParams(sunrise, sunset, T0, modelTmax, latest.dewp, cloudNow, latest.wspd);
-
-  // Estabilidad de la tasa de calentamiento observada
-  let observedRateStable = false;
-  if (metarList.length >= 3) {
-    const last3 = metarList.slice(-3);
-    const rates = last3.slice(1).map((m, i) => m.temp - last3[i].temp);
-    const avgRate = rates.reduce((a, b) => a + b, 0) / rates.length;
-    observedRateStable = rates.every(r => Math.abs(r - avgRate) < 1.5);
-  }
-
-  // Pico proyectado
-  const projectedMaxC = params.T0 + params.Ta;
-  const projectedMaxHour = params.tm;
-  const hoursToMax = Math.max(0, projectedMaxHour - nowH);
-
-  // Sigma y confidence
-  const sigma = calcSigma(spreadNow, cloudNow, hoursToMax, tafMax !== null, observedRateStable);
-  const confidence = calcConfidence(spreadNow, cloudNow, hoursToMax, tafMax !== null, observedRateStable);
-
-  // ── Puntos observados ────────────────────────────────────────────────────────
-  const obsPoints: ObsPoint[] = metarList.map(m => ({
-    hour: localHour(new Date(m.obsTime), city.timezone),
-    temp: city.unit === 'F' ? cToF(m.temp) : Math.round(m.temp),
-    isObs: true as const,
-  }));
-
-  // ── Puntos de forecast DTC (cada 30 min, de ahora a sunrise siguiente) ───────
-  const forecastPoints: ForecastPoint[] = [];
-  const fStart = nowH;
-  const fEnd = nowH <= sunset ? sunset + 6 : 24;
-  for (let t = fStart; t <= fEnd; t += 0.5) {
-    const tMod = t > 24 ? t - 24 : t;
-    const centralC = dtcTemperature(tMod, params);
-    const sigmaT = sigma * (1 + Math.abs(t - projectedMaxHour) * 0.05); // sigma crece lejos del pico
-    forecastPoints.push({
-      hour: t > 24 ? t - 24 : t,
-      temp:  city.unit === 'F' ? cToF(centralC) : Math.round(centralC),
-      upper: city.unit === 'F' ? cToF(centralC + sigmaT) : Math.round(centralC + sigmaT),
-      lower: city.unit === 'F' ? cToF(centralC - sigmaT) : Math.round(centralC - sigmaT),
-      isForecast: true as const,
+async function fetchPWSHistory(pwsId: string, unit: "F"|"C"): Promise<HourlyPoint[]> {
+  if (!WU_KEY || !pwsId) return [];
+  try {
+    const today = new Date().toISOString().split('T')[0].replace(/-/g, '');
+    const units = unit === 'F' ? 'e' : 'm';
+    const json = await fetch(
+      `https://api.weather.com/v2/pws/history/hourly` +
+      `?stationId=${pwsId}&format=json&units=${units}&date=${today}&apiKey=${WU_KEY}`,
+      { cache: 'no-store' }
+    ).then(r => { if (!r.ok) throw new Error(`PWS ${r.status}`); return r.json(); });
+    return (json.observations ?? []).map((o: {
+      obsTimeLocal: string;
+      imperial?: { tempAvg: number };
+      metric?: { tempAvg: number };
+    }) => {
+      const tempRaw = unit === 'F' ? (o.imperial?.tempAvg ?? 0) : (o.metric?.tempAvg ?? 0);
+      const tempC = unit === 'F' ? (tempRaw - 32) * 5 / 9 : tempRaw;
+      const isoTime = o.obsTimeLocal.replace(' ', 'T');
+      return { time: isoTime, tempC };
     });
+  } catch { return []; }
+}
+
+async function fetchWUForecast(city: City): Promise<{ all: HourlyPoint[]; day: ForecastDay | null }> {
+  if (!WU_KEY) return fetchOMFallback(city);
+  try {
+    const units = city.unit === 'F' ? 'e' : 'm';
+    const json = await fetch(
+      `https://api.weather.com/v3/wx/forecast/hourly/1day` +
+      `?geocode=${city.lat},${city.lon}&units=${units}&language=en-US&format=json&apiKey=${WU_KEY}`,
+      { cache: 'no-store' }
+    ).then(r => { if (!r.ok) throw new Error(`WUF ${r.status}`); return r.json(); });
+    const times: string[] = json.validTimeLocal ?? [];
+    const temps: number[] = json.temperature ?? [];
+    if (!times.length) return fetchOMFallback(city);
+    const toC = (t: number) => city.unit === 'F' ? (t - 32) * 5 / 9 : t;
+    const all = times.map((t, i) => ({
+      time: t.replace(/[+-]\d{4}$/, '').replace(/Z$/, ''),
+      tempC: toC(temps[i])
+    }));
+    const allC = all.map(p => p.tempC);
+    return { all, day: { maxC: Math.max(...allC), minC: Math.min(...allC), maxDisplay: 0, minDisplay: 0 } };
+  } catch { return fetchOMFallback(city); }
+}
+
+async function fetchOMFallback(city: City): Promise<{ all: HourlyPoint[]; day: ForecastDay | null }> {
+  try {
+    const json = await fetch(
+      `https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}` +
+      `&hourly=temperature_2m&daily=temperature_2m_max,temperature_2m_min` +
+      `&timezone=${encodeURIComponent(city.timezone)}&past_days=1&forecast_days=1`,
+      { cache: 'no-store' }
+    ).then(r => r.json());
+    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: city.timezone });
+    const all = (json.hourly.time as string[])
+      .map((t, i) => ({ time: t, tempC: json.hourly.temperature_2m[i] }))
+      .filter(p => p.time.startsWith(todayStr));
+    return { all, day: { maxC: json.daily.temperature_2m_max[1], minC: json.daily.temperature_2m_min[1], maxDisplay: 0, minDisplay: 0 } };
+  } catch { return { all: [], day: null }; }
+}
+
+async function fetchOMCurrent(city: City): Promise<WeatherObs|null> {
+  try {
+    const json = await fetch(
+      `https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}&current=temperature_2m,wind_speed_10m,wind_direction_10m&timezone=auto`,
+      { cache: 'no-store' }
+    ).then(r => r.json());
+    const tempC: number = json.current.temperature_2m, now = new Date();
+    return { tempC, tempDisplay: tempC, unit: 'C', station: city.station,
+      observedAt: now.toLocaleTimeString('en-US', { timeZone: city.timezone, hour: 'numeric', minute: '2-digit', hour12: true }),
+      observedISO: now.toISOString(), windSpeed: json.current.wind_speed_10m ?? null,
+      windDir: json.current.wind_direction_10m ?? null,
+      cloudCover: null, pressure: null, dewpoint: null, rawMetar: null, source: 'open-meteo' };
+  } catch { return null; }
+}
+
+function applyUnit(obs: WeatherObs, city: City): WeatherObs {
+  obs.tempDisplay = city.unit === 'F' ? cToF(obs.tempC) : Math.round(obs.tempC);
+  obs.unit = city.unit; return obs;
+}
+function applyForecastUnit(f: ForecastDay, city: City): ForecastDay {
+  f.maxDisplay = city.unit === 'F' ? cToF(f.maxC) : Math.round(f.maxC);
+  f.minDisplay = city.unit === 'F' ? cToF(f.minC) : Math.round(f.minC); return f;
+}
+function localHour(t: string): number {
+  const m = t.match(/T(\d{2}):/); return m ? parseInt(m[1], 10) : 0;
+}
+function nowLocalH(timezone: string): number {
+  const s = new Date().toLocaleString('en-US', { timeZone: timezone, hour: '2-digit', hour12: false });
+  return parseInt(s, 10) % 24;
+}
+
+export async function fetchWeatherData(city: City): Promise<WeatherData> {
+  const currentH = nowLocalH(city.timezone);
+  const [metarObs, pwsObs, wuForecast] = await Promise.all([
+    fetchTgftpMetar(city.station, city.timezone),
+    city.pwsId ? fetchPWSHistory(city.pwsId, city.unit) : Promise.resolve([]),
+    fetchWUForecast(city),
+  ]);
+  const forecast = wuForecast.day ? applyForecastUnit(wuForecast.day, city) : null;
+  const obsHourly: HourlyPoint[] = pwsObs.length > 0
+    ? pwsObs.filter(p => localHour(p.time) <= currentH)
+    : wuForecast.all.filter(p => localHour(p.time) <= currentH);
+  const forecastHourly = wuForecast.all;
+  if (metarObs) {
+    return { current: applyUnit(metarObs, city), obsHourly, forecastHourly, forecast };
   }
-
-  // Estadísticas del día
-  const todayTemps = metarList.map(m => city.unit === 'F' ? cToF(m.temp) : Math.round(m.temp));
-  const highToday = Math.max(...todayTemps);
-  const lowToday  = Math.min(...todayTemps);
-
-  return {
-    currentTemp:      city.unit === 'F' ? cToF(latest.temp) : Math.round(latest.temp),
-    highToday,
-    lowToday,
-    projectedMax:     city.unit === 'F' ? cToF(projectedMaxC) : Math.round(projectedMaxC),
-    projectedMaxHour: Math.round(projectedMaxHour),
-    confidence,
-    sigma:            Math.round(sigma * 10) / 10,
-    spread:           Math.round(spreadNow * 10) / 10,
-    cloudCover:       cloudNow,
-    windKt:           Math.round(latest.wspd),
-    rawMetar:         latest.rawOb,
-    obsPoints,
-    forecastPoints,
-  };
+  const omC = await fetchOMCurrent(city);
+  return { current: omC ? applyUnit(omC, city) : null, obsHourly, forecastHourly, forecast };
 }
