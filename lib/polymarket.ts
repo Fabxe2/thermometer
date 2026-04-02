@@ -1,44 +1,48 @@
-// lib/polymarket.ts
-export type Market = {
-  id: string; question: string; slug: string;
-  tokens: { outcome: string; price: number }[];
-  volume: number; liquidity: number; endDate: string; link: string;
-};
+import { City, cToF } from "./cities";
 
-export type CityMarkets = { markets: Market[]; matchedStation?: string };
+export type Bucket = { label: string; yesPrice: number; noPrice: number; };
+export type PolyData = { buckets: Bucket[]; eventUrl: string; };
 
 const GAMMA = 'https://gamma-api.polymarket.com';
 
-function matchesStation(question: string, city: string, station: string): boolean {
-  const q = question.toLowerCase();
-  const c = city.toLowerCase();
-  const s = station.toLowerCase();
-  return q.includes(s) || q.includes(c) || (c === 'new york' && q.includes('lga')) ||
-    (c === 'buenos aires' && (q.includes('ezeiza') || q.includes('saez')));
+function normalizeLabel(raw: string, unit: "F"|"C"): string {
+  raw = raw.trim();
+  if (/^\d+$/.test(raw)) return raw + "°" + unit;
+  if (/^\d+\.\d+$/.test(raw)) return Math.round(parseFloat(raw)) + "°" + unit;
+  raw = raw.replace(/°F/gi, '°F').replace(/°C/gi, '°C');
+  if (unit === 'F' && raw.includes('°C')) {
+    const m = raw.match(/([\d.]+)°C/);
+    if (m) return Math.round(cToF(parseFloat(m[1]))) + '°F';
+  }
+  return raw;
 }
 
-export async function getCityMarkets(city: string, station: string): Promise<CityMarkets> {
+export async function fetchPolymarketData(city: City, currentTemp: number): Promise<PolyData> {
+  const station = city.station.toLowerCase();
+  const name = city.name.toLowerCase();
+  const unit = city.unit;
   try {
-    const res = await fetch(`${GAMMA}/markets?closed=false&limit=50&tag=weather`, { next: { revalidate: 300 } });
-    if (!res.ok) return { markets: [] };
+    const res = await fetch(
+      `${GAMMA}/markets?tag_slug=weather&closed=false&limit=100`,
+      { cache: 'no-store' }
+    );
+    if (!res.ok) return { buckets: [], eventUrl: '' };
     const data = await res.json();
-    const markets: Market[] = (data.markets ?? data ?? [])
-      .filter((m: Record<string, unknown>) => matchesStation(String(m.question ?? ''), city, station))
-      .map((m: Record<string, unknown>) => ({
-        id:         String(m.id),
-        question:   String(m.question),
-        slug:       String(m.slug ?? m.conditionId ?? m.id),
-        tokens:     (m.tokens as {outcome:string;price:number}[] ?? []).map(t => ({
-          outcome: t.outcome,
-          price:   Math.round(Number(t.price) * 100),
-        })),
-        volume:     Number(m.volume ?? 0),
-        liquidity:  Number(m.liquidity ?? 0),
-        endDate:    String(m.endDate ?? m.end_date_iso ?? ''),
-        link:       'https://polymarket.com/event/' + String(m.slug ?? m.conditionId ?? m.id),
-      }));
-    return { markets, matchedStation: markets.length ? station : undefined };
-  } catch {
-    return { markets: [] };
-  }
+    const markets: Record<string, unknown>[] = Array.isArray(data) ? data : (data.markets ?? []);
+    const match = markets.find((m) => {
+      const q = String(m.question ?? '').toLowerCase();
+      return q.includes(station) || q.includes(name) ||
+        (name === 'new york' && q.includes('lga')) ||
+        (name === 'buenos aires' && (q.includes('ezeiza') || q.includes('saez')));
+    });
+    if (!match) return { buckets: [], eventUrl: '' };
+    const tokens: { outcome: string; price: string }[] = (match.tokens as { outcome: string; price: string }[]) ?? [];
+    const buckets: Bucket[] = tokens.map(t => ({
+      label: normalizeLabel(t.outcome, unit),
+      yesPrice: parseFloat(t.price),
+      noPrice: 1 - parseFloat(t.price),
+    }));
+    const slug = String(match.slug ?? match.conditionId ?? '');
+    return { buckets, eventUrl: `https://polymarket.com/event/${slug}` };
+  } catch { return { buckets: [], eventUrl: '' }; }
 }
