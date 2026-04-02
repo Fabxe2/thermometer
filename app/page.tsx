@@ -1,78 +1,60 @@
-import { CITIES, getLocalTime, cToF } from '../lib/cities';
-import { getWeatherData } from '../lib/weather';
+import { CITIES, getLocalTime } from "../lib/cities";
+import { fetchWeatherData } from "../lib/weather";
+import { fetchPolymarketData } from "../lib/polymarket";
 
-async function CityCard({ city }: { city: typeof CITIES[0] }) {
-  let temp: number | null = null;
-  let proj: number | null = null;
-  let conf: number | null = null;
+export const dynamic = "force-dynamic";
+
+async function CityRow({ city }: { city: typeof CITIES[0] }) {
+  let tempDisplay: number | null = null;
+  let maxDisplay: string = "--";
+  let topPrice: number | null = null;
   try {
-    const w = await getWeatherData(city);
-    temp = w.currentTemp;
-    proj = w.projectedMax;
-    conf = w.confidence;
-  } catch {}
+    const w = await fetchWeatherData(city);
+    tempDisplay = w.current?.tempDisplay ?? null;
+    if (w.forecast) {
+      const hi = Math.round(w.forecast.maxDisplay);
+      const lo = Math.round(w.forecast.minDisplay);
+      maxDisplay = hi === lo ? hi + "deg" + city.unit : hi + "-" + (hi+1) + "deg" + city.unit;
+    }
+    if (tempDisplay !== null) {
+      const poly = await fetchPolymarketData(city, tempDisplay);
+      if (poly.buckets.length) {
+        const top = poly.buckets.reduce((a, b) => b.yesPrice > a.yesPrice ? b : a, poly.buckets[0]);
+        topPrice = Math.round(top.yesPrice * 100);
+      }
+    }
+  } catch { /* skip */ }
 
   const localTime = getLocalTime(city.timezone, city.tzAbbr);
-  const confColor = conf === null ? 'var(--muted)' : conf >= 70 ? '#4ade80' : conf >= 45 ? '#facc15' : '#f87171';
 
   return (
-    <a
-      href={`/city/${city.slug}`}
-      style={{
-        display: 'block', padding: '14px 16px',
-        borderTop: '1px solid var(--rule)',
-        textDecoration: 'none', color: 'inherit',
-        transition: 'background .15s',
-      }}
-      onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,.03)')}
-      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-        <div>
-          <span style={{ fontWeight: 600, fontSize: 15 }}>{city.name}</span>
-          <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 8 }}>{city.station}</span>
-        </div>
-        <div style={{ display: 'flex', gap: 16, alignItems: 'baseline' }}>
-          {conf !== null && (
-            <span style={{ fontSize: 11, color: confColor }}>conf {conf}%</span>
-          )}
-          {proj !== null && (
-            <span style={{ fontSize: 12, color: 'var(--muted)' }}>
-              max <strong style={{ color: '#fff' }}>{proj}°{city.unit}</strong>
-            </span>
-          )}
-          {temp !== null && (
-            <span style={{ fontSize: 22, fontWeight: 300 }}>{temp}°{city.unit}</span>
-          )}
-        </div>
+    <a href={"/city/" + city.slug} style={{ display:"grid", gridTemplateColumns:"1fr auto auto auto", alignItems:"center", gap:"0 24px", padding:"10px 0", borderTop:"1px solid var(--color-rule)", textDecoration:"none", color:"inherit" }}>
+      <div>
+        <span style={{ fontSize:14, color:"var(--color-text-primary)" }}>{city.name}</span>
+        <span style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)", marginLeft:8 }}>{localTime}</span>
       </div>
-      <div style={{ fontSize: 11, color: 'var(--faint)', marginTop: 2 }}>{localTime}</div>
+      <span style={{ fontSize:13, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{maxDisplay}</span>
+      {topPrice !== null && <span style={{ fontSize:12, fontFamily:"monospace", color:"var(--color-accent)", fontWeight:500 }}>{topPrice}c</span>}
+      {topPrice === null && <span />}
+      <span style={{ fontSize:22, fontFamily:"monospace", fontWeight:300, color:"var(--color-data)", minWidth:52, textAlign:"right" }}>
+        {tempDisplay !== null ? tempDisplay + "deg" + city.unit : "--"}
+      </span>
     </a>
   );
 }
 
 export default function Home() {
-  const us   = CITIES.filter(c => c.region === 'us');
+  const us = CITIES.filter(c => c.region === 'us');
   const intl = CITIES.filter(c => c.region === 'intl');
-
   return (
-    <main style={{ maxWidth: 720, margin: '0 auto', padding: '32px 16px 64px' }}>
-      <div style={{ marginBottom: 32 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: -0.5 }}>thermometer</h1>
-        <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>
-          Live temperature + DTC forecast for Polymarket markets
-        </p>
+    <main style={{ maxWidth:720, margin:"0 auto", padding:"32px 24px 64px" }}>
+      <div style={{ marginBottom:40 }}>
+        <h1 style={{ fontSize:18, fontWeight:400, letterSpacing:"0.02em", color:"var(--color-text-primary)" }}>thermometer</h1>
       </div>
-
-      <div style={{ fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 4 }}>
-        United States
-      </div>
-      {us.map(c => <CityCard key={c.slug} city={c} />)}
-
-      <div style={{ fontSize: 11, letterSpacing: 1, textTransform: 'uppercase', color: 'var(--muted)', margin: '24px 0 4px' }}>
-        International
-      </div>
-      {intl.map(c => <CityCard key={c.slug} city={c} />)}
+      <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", marginBottom:4 }}>United States</div>
+      {us.map(c => <CityRow key={c.slug} city={c} />)}
+      <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", margin:"32px 0 4px" }}>International</div>
+      {intl.map(c => <CityRow key={c.slug} city={c} />)}
     </main>
   );
 }
