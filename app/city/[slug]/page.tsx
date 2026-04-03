@@ -124,7 +124,7 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
             hover para ver valores
           </span>
         </div>
-        <Sparkline data={chartData} height={300} />
+        <Sparkline data={chartData} height={300} unit={unit} />
       </div>
 
       <div style={{ marginBottom:40, minHeight:200 }}>
