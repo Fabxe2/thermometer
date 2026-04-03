@@ -19,7 +19,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   return { title: city.name + " – thermometer" };
 }
 
-function toDisplay(tempC: number, unit: "F"|"C"): number {
+function toDisplay(tempC: number, unit: "F" | "C"): number {
   return unit === "F" ? cToF(tempC) : Math.round(tempC * 10) / 10;
 }
 function getHour(iso: string): number {
@@ -72,36 +72,37 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
     ? polyData.buckets.reduce((a, b) => b.yesPrice > a.yesPrice ? b : a, polyData.buckets[0])
     : null;
 
-  function labelWithUnit(label: string): string {
-    if (!label || label.includes('F') || label.includes('C')) return label;
-    if (label.includes('deg')) return label.replace('deg', 'deg' + unit);
-    return label;
-  }
-
-  const wunderUrl = `https://www.wunderground.com/forecast/${safeCity.wundergroundSlug}`;
+  const wunderUrl = "https://www.wunderground.com/forecast/" + safeCity.wundergroundSlug;
 
   return (
     <main style={{ maxWidth:720, margin:"0 auto", padding:"32px 24px", minHeight:"100vh" }}>
-      <Link href="/" style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.1em", color:"var(--color-text-tertiary)", textDecoration:"none" }}>
-        arrow All Cities
+
+      <Link href="/" style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.1em", color:"rgba(255,255,255,0.3)", textDecoration:"none" }}>
+        ← All Cities
       </Link>
 
-      <header style={{ marginTop:24, marginBottom:32, paddingBottom:24, borderBottom:"1px solid var(--color-rule)" }}>
+      <header style={{ marginTop:24, marginBottom:32, paddingBottom:24, borderBottom:"1px solid rgba(255,255,255,0.08)" }}>
         <div style={{ display:"flex", alignItems:"baseline", gap:12, marginBottom:4 }}>
-          <h1 style={{ fontSize:22, textTransform:"uppercase", letterSpacing:"0.05em", color:"var(--color-text-primary)", margin:0, fontWeight:400 }}>{safeCity.name}</h1>
-          <span style={{ fontSize:13, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{safeCity.station}</span>
-          <span style={{ fontSize:13, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{time}</span>
+          <h1 style={{ fontSize:22, textTransform:"uppercase", letterSpacing:"0.05em", color:"#fff", margin:0, fontWeight:400 }}>
+            {safeCity.name}
+          </h1>
+          <span style={{ fontSize:13, fontFamily:"monospace", color:"rgba(255,255,255,0.3)" }}>{safeCity.station}</span>
+          <span style={{ fontSize:13, fontFamily:"monospace", color:"rgba(255,255,255,0.3)" }}>{time}</span>
         </div>
-        <div style={{ fontFamily:"monospace", fontSize:"clamp(64px,9vw,88px)", lineHeight:1, fontWeight:300, color:"var(--color-data)", marginTop:12 }}>
-          {currentTempDisplay != null ? currentTempDisplay : "---"}
-          <span style={{ fontSize:"clamp(28px,4vw,42px)", color:"var(--color-text-secondary)" }}>deg{unit}</span>
+
+        <div style={{ fontFamily:"monospace", fontSize:"clamp(64px,9vw,88px)", lineHeight:1, fontWeight:300, color:"#fff", marginTop:12 }}>
+          {currentTempDisplay != null ? currentTempDisplay : "—"}
+          <span style={{ fontSize:"clamp(28px,4vw,42px)", color:"rgba(255,255,255,0.5)" }}>°{unit}</span>
         </div>
+
         {current && (
           <div style={{ display:"flex", alignItems:"center", gap:16, marginTop:6 }}>
-            <span style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>observed at {current.observedAt}</span>
+            <span style={{ fontSize:11, fontFamily:"monospace", color:"rgba(255,255,255,0.3)" }}>
+              observed at {current.observedAt}
+            </span>
             {topBucket && (
-              <span style={{ fontSize:12, fontFamily:"monospace", color:"var(--color-accent)", fontWeight:500 }}>
-                {labelWithUnit(topBucket.label)} {Math.round(topBucket.yesPrice * 100)}c
+              <span style={{ fontSize:12, fontFamily:"monospace", color:"#e8b86d", fontWeight:500 }}>
+                {topBucket.label} {Math.round(topBucket.yesPrice * 100)}¢
               </span>
             )}
           </div>
@@ -109,28 +110,47 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
       </header>
 
       <div style={{ marginBottom:40 }}>
-        <h2 style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", fontWeight:400, marginBottom:12 }}>Temperature</h2>
+        <div style={{ display:"flex", alignItems:"center", gap:20, marginBottom:12 }}>
+          <h2 style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"rgba(255,255,255,0.3)", fontWeight:400, margin:0 }}>
+            Temperature
+          </h2>
+          <span style={{ fontSize:10, fontFamily:"monospace", color:"rgba(255,255,255,0.7)" }}>
+            — obs
+          </span>
+          <span style={{ fontSize:10, fontFamily:"monospace", color:"rgba(255,255,255,0.35)", letterSpacing:2 }}>
+            - - forecast
+          </span>
+          <span style={{ fontSize:10, fontFamily:"monospace", color:"rgba(255,255,255,0.2)" }}>
+            hover para ver valores
+          </span>
+        </div>
         <Sparkline data={chartData} height={300} />
       </div>
 
-      <div style={{ marginBottom:40, minHeight:240 }}>
+      <div style={{ marginBottom:40, minHeight:200 }}>
         <MarketChart buckets={polyData.buckets} eventUrl={polyData.eventUrl} unit={unit} />
       </div>
 
       {forecast && (
-        <div style={{ paddingTop:24, display:"flex", gap:32, borderTop:"1px solid var(--color-rule)", flexWrap:"wrap" }}>
+        <div style={{ paddingTop:24, display:"flex", gap:32, borderTop:"1px solid rgba(255,255,255,0.08)", flexWrap:"wrap" }}>
           <div>
-            <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", marginBottom:4 }}>Today High</div>
-            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"var(--color-data)" }}>{Math.round(forecast.maxDisplay)}deg{unit}</div>
+            <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"rgba(255,255,255,0.3)", marginBottom:4 }}>Today High</div>
+            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"#fff" }}>
+              {Math.round(forecast.maxDisplay)}°{unit}
+            </div>
           </div>
           <div>
-            <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", marginBottom:4 }}>Today Low</div>
-            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"var(--color-data)" }}>{Math.round(forecast.minDisplay)}deg{unit}</div>
+            <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"rgba(255,255,255,0.3)", marginBottom:4 }}>Today Low</div>
+            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"#fff" }}>
+              {Math.round(forecast.minDisplay)}°{unit}
+            </div>
           </div>
           {current?.rawMetar && (
             <div style={{ flex:1, minWidth:0 }}>
-              <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"var(--color-text-tertiary)", marginBottom:4 }}>Raw METAR</div>
-              <div style={{ fontSize:10, fontFamily:"monospace", color:"var(--color-text-tertiary)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{current.rawMetar}</div>
+              <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"rgba(255,255,255,0.3)", marginBottom:4 }}>Raw METAR</div>
+              <div style={{ fontSize:10, fontFamily:"monospace", color:"rgba(255,255,255,0.3)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                {current.rawMetar}
+              </div>
             </div>
           )}
         </div>
@@ -138,8 +158,8 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
 
       <div style={{ marginTop:32 }}>
         <a href={wunderUrl} target="_blank" rel="noopener noreferrer"
-          style={{ fontSize:11, fontFamily:"monospace", color:"var(--color-text-tertiary)", textDecoration:"none" }}>
-          history on wunderground up-right
+          style={{ fontSize:11, fontFamily:"monospace", color:"rgba(255,255,255,0.3)", textDecoration:"none" }}>
+          history on wunderground ↗
         </a>
       </div>
     </main>
