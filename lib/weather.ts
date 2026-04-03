@@ -222,36 +222,34 @@ function nowLocalH(timezone: string): number {
 // ── MAIN ──────────────────────────────────────────────────────────────────────
 export async function fetchWeatherData(city: City): Promise<WeatherData> {
   const currentH = nowLocalH(city.timezone);
+  const isUS = city.region === 'us';
 
-  const [metarObs, pwsObs, metarHistory, wuForecast] = await Promise.all([
+  const [metarObs, pwsObs, metarHistory, forecastResult] = await Promise.all([
     // Temperatura actual (METAR en tiempo real)
     fetchTgftpMetar(city.station, city.timezone),
-    // OBS horarias via PWS (ciudades con estacion propia)
+    // OBS horarias via PWS (ciudades US con estacion propia)
     city.pwsId ? fetchPWSHistory(city.pwsId, city.unit) : Promise.resolve([]),
-    // OBS horarias via historial METAR (fallback para ciudades sin PWS)
+    // OBS horarias via historial METAR (ciudades sin PWS)
     city.pwsId ? Promise.resolve([]) : fetchMetarHistory(city.station, city.timezone),
-    // FORECAST horario WU (misma fuente que el grafico de Wunderground)
-    fetchWUForecast(city),
+    // FORECAST: WU para ciudades US, Open-Meteo para internacionales
+    isUS ? fetchWUForecast(city) : fetchOMFallback(city),
   ]);
 
-  const forecast = wuForecast.day ? applyForecastUnit(wuForecast.day, city) : null;
+  const forecast = forecastResult.day ? applyForecastUnit(forecastResult.day, city) : null;
+  const forecastAll = 'all' in forecastResult ? forecastResult.all : [];
 
   // OBS: PWS si disponible, sino METARs historicos reales
-  // En ambos casos solo horas <= ahora (no mostrar "observaciones futuras")
   let obsHourly: HourlyPoint[];
   if (pwsObs.length > 0) {
-    // PWS: ya viene en hora local, filtrar por hora actual
     obsHourly = pwsObs.filter(p => localHour(p.time) <= currentH);
   } else if (metarHistory.length > 0) {
-    // METAR history: ya filtrado a hoy, filtrar por hora actual
     obsHourly = metarHistory.filter(p => localHour(p.time) <= currentH);
   } else {
-    // Ultimo fallback: horas pasadas del forecast WU (menos preciso pero funcional)
-    obsHourly = wuForecast.all.filter(p => localHour(p.time) <= currentH);
+    obsHourly = forecastAll.filter(p => localHour(p.time) <= currentH);
   }
 
-  // FORECAST: todas las 24h de WU (linea punteada completa del dia)
-  const forecastHourly = wuForecast.all;
+  // FORECAST: 24h completas (linea punteada)
+  const forecastHourly = forecastAll;
 
   if (metarObs) {
     return { current: applyUnit(metarObs, city), obsHourly, forecastHourly, forecast };
