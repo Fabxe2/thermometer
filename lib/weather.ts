@@ -7,16 +7,17 @@ export type WeatherObs = {
   dewpoint: number|null; rawMetar: string|null; source: string;
 };
 export type HourlyPoint = { time: string; tempC: number; };
-export type ForecastDay = { maxC: number; minC: number; maxDisplay: number; minDisplay: number; };
-export type WeatherData = {
-  current: WeatherObs|null;
-  obsHourly: HourlyPoint[];
-  forecastHourly: HourlyPoint[];
-  forecast: ForecastDay|null;
+export type ForecastDay  = { maxC: number; minC: number; maxDisplay: number; minDisplay: number; };
+export type WeatherData  = {
+  current:        WeatherObs|null;
+  obsHourly:      HourlyPoint[];   // Observaciones reales -> linea solida
+  forecastHourly: HourlyPoint[];   // WU hourly forecast  -> linea punteada
+  forecast:       ForecastDay|null;
 };
 
 const WU_KEY = process.env.WU_API_KEY || '';
 
+// ── METAR parsers ──────────────────────────────────────────────────────────────
 function parseTempFromMetar(metar: string): number | null {
   const tg = metar.match(/\bT([01])(\d{3})[01]\d{3}\b/);
   if (tg) { const s = tg[1]==='1'?-1:1; return s*parseInt(tg[2],10)/10; }
@@ -36,6 +37,7 @@ function parseCloudFromMetar(metar: string): string|null {
   return metar.match(/(CLR|SKC|CAVOK|FEW|SCT|BKN|OVC)/)?.[1]??null;
 }
 
+// ── METAR actual (temperatura en tiempo real) ──────────────────────────────────
 async function fetchTgftpMetar(station: string, timezone: string): Promise<WeatherObs|null> {
   try {
     const res = await fetch(
@@ -62,6 +64,8 @@ async function fetchTgftpMetar(station: string, timezone: string): Promise<Weath
   } catch { return null; }
 }
 
+// ── OBS: PWS (Weather Underground personal weather stations) ─────────────────
+// Fuente principal de observaciones horarias reales para ciudades US con PWS
 async function fetchPWSHistory(pwsId: string, unit: "F"|"C"): Promise<HourlyPoint[]> {
   if (!WU_KEY || !pwsId) return [];
   try {
@@ -75,16 +79,61 @@ async function fetchPWSHistory(pwsId: string, unit: "F"|"C"): Promise<HourlyPoin
     return (json.observations ?? []).map((o: {
       obsTimeLocal: string;
       imperial?: { tempAvg: number };
-      metric?: { tempAvg: number };
+      metric?:   { tempAvg: number };
     }) => {
       const tempRaw = unit === 'F' ? (o.imperial?.tempAvg ?? 0) : (o.metric?.tempAvg ?? 0);
-      const tempC = unit === 'F' ? (tempRaw - 32) * 5 / 9 : tempRaw;
-      const isoTime = o.obsTimeLocal.replace(' ', 'T');
-      return { time: isoTime, tempC };
+      const tempC   = unit === 'F' ? (tempRaw - 32) * 5 / 9 : tempRaw;
+      return { time: o.obsTimeLocal.replace(' ', 'T'), tempC };
     });
   } catch { return []; }
 }
 
+// ── OBS: Historial de METARs reales (aviationweather.gov) ────────────────────
+// Fuente de observaciones para ciudades sin PWS (internacionales)
+// Devuelve los METARs de las ultimas 24h, filtrados al dia local de hoy
+async function fetchMetarHistory(station: string, timezone: string): Promise<HourlyPoint[]> {
+  try {
+    const res = await fetch(
+      `https://aviationweather.gov/api/data/metar?ids=${station}&format=json&hours=26`,
+      { cache: 'no-store' }
+    );
+    if (!res.ok) return [];
+    const data: Record<string, unknown>[] = await res.json();
+    if (!data?.length) return [];
+
+    // Calcular inicio del dia local en UTC
+    const nowLocal = new Date();
+    const todayStr = nowLocal.toLocaleDateString('en-CA', { timeZone: timezone });
+    const midnightLocal = new Date(todayStr + 'T00:00:00');
+    const utcOffsetMs = nowLocal.getTime() - new Date(nowLocal.toLocaleString('en-US', { timeZone: 'UTC' })).getTime();
+    const midnightUTC = new Date(midnightLocal.getTime() - utcOffsetMs);
+
+    return data
+      .filter(m => m.temp != null)
+      .map(m => {
+        const obsTime = new Date(String(m.reportTime ?? m.obsTime ?? ''));
+        return { time: obsTime.toISOString(), tempC: Number(m.temp) };
+      })
+      .filter(p => {
+        const t = new Date(p.time);
+        return t >= midnightUTC && t <= nowLocal;
+      })
+      .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())
+      .map(p => {
+        // Convertir timestamp UTC a hora local para el mapa del grafico
+        const localStr = new Date(p.time).toLocaleString('en-US', {
+          timeZone: timezone, hour: '2-digit', minute: '2-digit', hour12: false
+        });
+        const [h, min] = localStr.split(':').map(Number);
+        const localISO = todayStr + 'T' + String(h).padStart(2,'0') + ':' + String(min).padStart(2,'0') + ':00';
+        return { time: localISO, tempC: p.tempC };
+      });
+  } catch { return []; }
+}
+
+// ── FORECAST: WU hourly (mismo origen que el grafico de Wunderground) ─────────
+// api.weather.com/v3/wx/forecast/hourly/1day -> proyeccion horaria del dia
+// Fallback a Open-Meteo si no hay WU_KEY
 async function fetchWUForecast(city: City): Promise<{ all: HourlyPoint[]; day: ForecastDay | null }> {
   if (!WU_KEY) return fetchOMFallback(city);
   try {
@@ -94,19 +143,27 @@ async function fetchWUForecast(city: City): Promise<{ all: HourlyPoint[]; day: F
       `?geocode=${city.lat},${city.lon}&units=${units}&language=en-US&format=json&apiKey=${WU_KEY}`,
       { cache: 'no-store' }
     ).then(r => { if (!r.ok) throw new Error(`WUF ${r.status}`); return r.json(); });
+
     const times: string[] = json.validTimeLocal ?? [];
     const temps: number[] = json.temperature ?? [];
     if (!times.length) return fetchOMFallback(city);
+
+    // WU devuelve temperaturas en la unidad solicitada, convertir a C internamente
     const toC = (t: number) => city.unit === 'F' ? (t - 32) * 5 / 9 : t;
     const all = times.map((t, i) => ({
+      // Normalizar timestamp: "2026-04-02T13:00:00+0000" -> "2026-04-02T13:00:00"
       time: t.replace(/[+-]\d{4}$/, '').replace(/Z$/, ''),
       tempC: toC(temps[i])
     }));
     const allC = all.map(p => p.tempC);
-    return { all, day: { maxC: Math.max(...allC), minC: Math.min(...allC), maxDisplay: 0, minDisplay: 0 } };
+    return {
+      all,
+      day: { maxC: Math.max(...allC), minC: Math.min(...allC), maxDisplay: 0, minDisplay: 0 }
+    };
   } catch { return fetchOMFallback(city); }
 }
 
+// ── FALLBACK: Open-Meteo si no hay WU_KEY ────────────────────────────────────
 async function fetchOMFallback(city: City): Promise<{ all: HourlyPoint[]; day: ForecastDay | null }> {
   try {
     const json = await fetch(
@@ -119,7 +176,14 @@ async function fetchOMFallback(city: City): Promise<{ all: HourlyPoint[]; day: F
     const all = (json.hourly.time as string[])
       .map((t, i) => ({ time: t, tempC: json.hourly.temperature_2m[i] }))
       .filter(p => p.time.startsWith(todayStr));
-    return { all, day: { maxC: json.daily.temperature_2m_max[1], minC: json.daily.temperature_2m_min[1], maxDisplay: 0, minDisplay: 0 } };
+    return {
+      all,
+      day: {
+        maxC: json.daily.temperature_2m_max[1],
+        minC: json.daily.temperature_2m_min[1],
+        maxDisplay: 0, minDisplay: 0
+      }
+    };
   } catch { return { all: [], day: null }; }
 }
 
@@ -138,6 +202,7 @@ async function fetchOMCurrent(city: City): Promise<WeatherObs|null> {
   } catch { return null; }
 }
 
+// ── Helpers de unidad ─────────────────────────────────────────────────────────
 function applyUnit(obs: WeatherObs, city: City): WeatherObs {
   obs.tempDisplay = city.unit === 'F' ? cToF(obs.tempC) : Math.round(obs.tempC);
   obs.unit = city.unit; return obs;
@@ -154,18 +219,40 @@ function nowLocalH(timezone: string): number {
   return parseInt(s, 10) % 24;
 }
 
+// ── MAIN ──────────────────────────────────────────────────────────────────────
 export async function fetchWeatherData(city: City): Promise<WeatherData> {
   const currentH = nowLocalH(city.timezone);
-  const [metarObs, pwsObs, wuForecast] = await Promise.all([
+
+  const [metarObs, pwsObs, metarHistory, wuForecast] = await Promise.all([
+    // Temperatura actual (METAR en tiempo real)
     fetchTgftpMetar(city.station, city.timezone),
+    // OBS horarias via PWS (ciudades con estacion propia)
     city.pwsId ? fetchPWSHistory(city.pwsId, city.unit) : Promise.resolve([]),
+    // OBS horarias via historial METAR (fallback para ciudades sin PWS)
+    city.pwsId ? Promise.resolve([]) : fetchMetarHistory(city.station, city.timezone),
+    // FORECAST horario WU (misma fuente que el grafico de Wunderground)
     fetchWUForecast(city),
   ]);
+
   const forecast = wuForecast.day ? applyForecastUnit(wuForecast.day, city) : null;
-  const obsHourly: HourlyPoint[] = pwsObs.length > 0
-    ? pwsObs.filter(p => localHour(p.time) <= currentH)
-    : wuForecast.all.filter(p => localHour(p.time) <= currentH);
+
+  // OBS: PWS si disponible, sino METARs historicos reales
+  // En ambos casos solo horas <= ahora (no mostrar "observaciones futuras")
+  let obsHourly: HourlyPoint[];
+  if (pwsObs.length > 0) {
+    // PWS: ya viene en hora local, filtrar por hora actual
+    obsHourly = pwsObs.filter(p => localHour(p.time) <= currentH);
+  } else if (metarHistory.length > 0) {
+    // METAR history: ya filtrado a hoy, filtrar por hora actual
+    obsHourly = metarHistory.filter(p => localHour(p.time) <= currentH);
+  } else {
+    // Ultimo fallback: horas pasadas del forecast WU (menos preciso pero funcional)
+    obsHourly = wuForecast.all.filter(p => localHour(p.time) <= currentH);
+  }
+
+  // FORECAST: todas las 24h de WU (linea punteada completa del dia)
   const forecastHourly = wuForecast.all;
+
   if (metarObs) {
     return { current: applyUnit(metarObs, city), obsHourly, forecastHourly, forecast };
   }
