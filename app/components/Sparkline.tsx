@@ -10,17 +10,19 @@ export type ChartPoint = {
   forecast?: number;
 };
 
-type Props = { data: ChartPoint[]; height?: number; };
+type Props = { data: ChartPoint[]; height?: number; unit?: "F" | "C"; };
 
-function CustomTooltip({ active, payload, label }: {
+function CustomTooltip({ active, payload, label, unit }: {
   active?: boolean;
   payload?: { dataKey: string; value: number }[];
   label?: number;
+  unit?: "F" | "C";
 }) {
   if (!active || !payload?.length) return null;
   const h = Number(label ?? 0);
   const hh = h % 12 === 0 ? 12 : h % 12;
   const ampm = h < 12 ? "AM" : "PM";
+  const sym = unit === "F" ? "°F" : "°C";
 
   const obs   = payload.find(p => p.dataKey === "observed");
   const fcast = payload.find(p => p.dataKey === "forecast");
@@ -38,19 +40,21 @@ function CustomTooltip({ active, payload, label }: {
       </div>
       {obs && (
         <div style={{color:"#ffffff", display:"flex", justifyContent:"space-between", gap:20}}>
-          <span>OBS</span><strong>{obs.value}°</strong>
+          <span>OBS</span>
+          <strong>{obs.value}{sym}</strong>
         </div>
       )}
       {fcast && (
         <div style={{color:"rgba(255,255,255,0.45)", display:"flex", justifyContent:"space-between", gap:20}}>
-          <span>FCST</span><span>{fcast.value}°</span>
+          <span>FCST</span>
+          <span>{fcast.value}{sym}</span>
         </div>
       )}
     </div>
   );
 }
 
-export default function Sparkline({ data, height = 300 }: Props) {
+export default function Sparkline({ data, height = 300, unit = "C" }: Props) {
   if (!data || data.length === 0) return null;
   const vals = data.flatMap(d => [d.observed, d.forecast].filter((v): v is number => v != null));
   if (vals.length === 0) return null;
@@ -71,6 +75,7 @@ export default function Sparkline({ data, height = 300 }: Props) {
   const xLabels: Record<number, string> = {
     0:"12a", 3:"3a", 6:"6a", 9:"9a", 12:"12p", 15:"3p", 18:"6p", 21:"9p"
   };
+  const sym = unit === "F" ? "°F" : "°C";
 
   return (
     <ResponsiveContainer width="100%" height={height}>
@@ -78,8 +83,9 @@ export default function Sparkline({ data, height = 300 }: Props) {
         <CartesianGrid horizontal vertical={false} stroke="rgba(255,255,255,0.04)" />
         <YAxis
           domain={domain} ticks={yTicks}
+          tickFormatter={v => v + sym}
           tick={{fill:"rgba(255,255,255,0.3)", fontSize:10, fontFamily:"monospace"}}
-          axisLine={false} tickLine={false} width={28}
+          axisLine={false} tickLine={false} width={38}
         />
         <XAxis
           dataKey="hour" type="number" domain={[0,23]} ticks={xTicks}
@@ -88,7 +94,7 @@ export default function Sparkline({ data, height = 300 }: Props) {
           axisLine={false} tickLine={false}
         />
         <Tooltip
-          content={<CustomTooltip />}
+          content={<CustomTooltip unit={unit} />}
           cursor={{stroke:"rgba(255,255,255,0.12)", strokeWidth:1}}
         />
         <ReferenceLine
