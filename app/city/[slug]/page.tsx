@@ -5,6 +5,7 @@ import { fetchWeatherData } from "@/lib/weather";
 import { fetchPolymarketData } from "@/lib/polymarket";
 import Sparkline, { ChartPoint } from "../../components/Sparkline";
 import MarketChart from "../../components/MarketChart";
+import ObsLog from "../../components/ObsLog";
 
 export const dynamic = "force-dynamic";
 
@@ -145,18 +146,21 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
             <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"rgba(255,255,255,0.3)", marginBottom:4 }}>Today Low</div>
             <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"#fff" }}>{Math.round(forecast.minDisplay)}°{unit}</div>
           </div>
-          {current?.rawMetar && (
-            <div style={{ flex:1, minWidth:0 }}>
-              <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"rgba(255,255,255,0.3)", marginBottom:4 }}>Raw METAR</div>
-              <div style={{ fontSize:10, fontFamily:"monospace", color:"rgba(255,255,255,0.3)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                {current.rawMetar}
-              </div>
-            </div>
-          )}
+
         </div>
       )}
 
-      <div style={{ marginTop:32 }}>
+      <div style={{ marginTop:32, marginBottom:32 }}>
+        <ObsLog
+          obsHourly={weatherData.obsHourly}
+          unit={unit}
+          timezone={safeCity.timezone}
+          currentTemp={weatherData.current?.tempC ?? null}
+          currentTime={current?.observedAt ?? ""}
+        />
+      </div>
+
+      <div style={{ marginTop:0 }}>
         <a href={wunderUrl} target="_blank" rel="noopener noreferrer"
           style={{ fontSize:11, fontFamily:"monospace", color:"rgba(255,255,255,0.3)", textDecoration:"none" }}>
           history on wunderground ↗
