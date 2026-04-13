@@ -1,1 +1,35 @@
-class c extends HTMLElement{state=l.Initializing;static attrPrefix="";dataJson="";subtleLogin=!1;hasErrored=!1;async connectedCallback(){this.originalButtonText=this.getCurrentButtonText(),this.originalErrorText=this.errorText.textContent,this.setState((0,i.$j)()?l.Ready:l.Unsupported),this.passkeySupport=await window.PublicKeyCredential?.isUserVerifyingPlatformAuthenticatorAvailable(),this.state!==l.Unsupported&&!this.passkeySupport&&this.passkeysUnsupportedMessage&&(this.passkeysUnsupportedMessage.hidden=!1),this.subtleLogin?this.handleWebauthnSubtle():this.showWebauthnLoginFragment()}handleWebauthnSubtle(){let e=document.querySelector(".js-webauthn-subtle");e&&(e.hidden=!1,this.updateWebauthnSubtleParentBoxVisibility(!1),e.addEventListener("webauthn-subtle-submit",()=>{this.showWebauthnLoginFragment(),this.state!==l.Unsupported&&this.prompt()}))}showWebauthnLoginFragment(){let e=document.querySelector(".js-webauthn-login-section");if(!e)return;e.hidden=!1;let t=document.querySelector(".js-webauthn-login-divider");t&&(t.hidden=!1,this.updateWebauthnSubtleParentBoxVisibility(!0))}updateWebauthnSubtleParentBoxVisibility(e){let t=document.querySelector(".js-webauthn-hint");t&&(t.hidden=e)}getCurrentButtonText(){return this.buttonText.textContent||""}setCurrentButtonText(e){this.buttonText.textContent=e}setState(e){let t=this.button.getAttribute("data-retry-message")||this.originalButtonText,r=this.hasErrored?t:this.originalButtonText;for(let e of(this.setCurrentButtonText(r),this.button.disabled=!1,this.button.hidden=!1,this.errorText.textContent="",this.messages))e.hidden=!0;switch(e){case l.Initializing:this.button.disabled=!0;break;case l.Unsupported:this.button.disabled=!0,this.unsupportedMessage.hidden=!1,this.passkeysUnsupportedMessage&&(this.passkeysUnsupportedMessage.hidden=!0);break;case l.Ready:break;case l.Waiting:this.waitingMessage.hidden=!1,this.button.hidden=!0;break;case l.Error:this.errorMessage.hidden=!1,this.errorText.textContent=this.originalErrorText;break;case l.Submitting:this.setCurrentButtonText("Verifying\u2026"),this.button.disabled=!0;break;default:throw Error("invalid state")}this.state=e}async prompt(e,t){e?.preventDefault(),this.dispatchEvent(new CustomEvent("webauthn-get-prompt"));try{if(t||this.setState(l.Waiting),(0,s.G7)("migrate_away_from_webauthn_json")){let e=JSON.parse(this.dataJson).publicKey,t=PublicKeyCredential.parseRequestOptionsFromJSON(e),r=await navigator.credentials.get({publicKey:t});this.setState(l.Submitting);let n=this.closest(".js-webauthn-form");n.querySelector(".js-webauthn-response").value=JSON.stringify(r.toJSON()),(0,o.k_)(n)}else{let e=JSON.parse(this.dataJson),t=(0,i.d5)(e),r=await (0,i.Jt)(t);this.setState(l.Submitting);let n=this.closest(".js-webauthn-form");n.querySelector(".js-webauthn-response").value=JSON.stringify(r),(0,o.k_)(n)}}catch(e){if(!t)throw this.hasErrored=!0,this.setState(l.Error),e}}}
+export type City = {
+  name: string; slug: string; station: string; lat: number; lon: number;
+  unit: 'F' | 'C'; timezone: string; tzAbbr: string; region: 'us' | 'intl';
+  pwsId?: string; wundergroundSlug: string;
+};
+
+export const CITIES: City[] = [
+  { name:'New York',     slug:'new-york',     station:'KLGA', lat:40.77,   lon:-73.87,  unit:'F', timezone:'America/New_York',               tzAbbr:'ET',  region:'us',   pwsId:'KNYNEWYO1552', wundergroundSlug:'KLGA' },
+  { name:'Chicago',      slug:'chicago',      station:'KORD', lat:41.98,   lon:-87.90,  unit:'F', timezone:'America/Chicago',                tzAbbr:'CT',  region:'us',   pwsId:'T00061083',    wundergroundSlug:'KORD' },
+  { name:'Dallas',       slug:'dallas',       station:'KDAL', lat:32.84,   lon:-96.85,  unit:'F', timezone:'America/Chicago',                tzAbbr:'CT',  region:'us',   pwsId:'KTXDALLA703',  wundergroundSlug:'KDAL' },
+  { name:'Miami',        slug:'miami',        station:'KMIA', lat:25.79,   lon:-80.29,  unit:'F', timezone:'America/New_York',               tzAbbr:'ET',  region:'us',   pwsId:'KFLMIAMI1030', wundergroundSlug:'KMIA' },
+  { name:'Seattle',      slug:'seattle',      station:'KSEA', lat:47.45,   lon:-122.30, unit:'F', timezone:'America/Los_Angeles',            tzAbbr:'PT',  region:'us',   pwsId:'T00060006',    wundergroundSlug:'KSEA' },
+  { name:'Atlanta',      slug:'atlanta',      station:'KATL', lat:33.63,   lon:-84.43,  unit:'F', timezone:'America/New_York',               tzAbbr:'ET',  region:'us',   pwsId:'KGAATLAN557',  wundergroundSlug:'KATL' },
+  { name:'London',       slug:'london',       station:'EGLC', lat:51.51,   lon:0.05,    unit:'C', timezone:'Europe/London',                  tzAbbr:'GMT', region:'intl', pwsId:'ILONDON828',   wundergroundSlug:'EGLC' },
+  { name:'Toronto',      slug:'toronto',      station:'CYYZ', lat:43.68,   lon:-79.63,  unit:'C', timezone:'America/Toronto',                tzAbbr:'ET',  region:'intl', pwsId:'IONTARIO1108', wundergroundSlug:'CYYZ' },
+  { name:'Buenos Aires', slug:'buenos-aires', station:'SAEZ', lat:-34.82,  lon:-58.53,  unit:'C', timezone:'America/Argentina/Buenos_Aires', tzAbbr:'ART', region:'intl', wundergroundSlug:'SAEZ' },
+  { name:'Madrid',       slug:'madrid',       station:'LEMD', lat:40.4719, lon:-3.5626, unit:'C', timezone:'Europe/Madrid',                  tzAbbr:'CET', region:'intl', wundergroundSlug:'LEMD' },
+  { name:'Ankara',       slug:'ankara',       station:'LTAC', lat:40.13,   lon:32.99,   unit:'C', timezone:'Europe/Istanbul',                tzAbbr:'TRT', region:'intl', wundergroundSlug:'LTAC' },
+  { name:'Milan',        slug:'milan',        station:'LIMC', lat:45.6306, lon:8.7231,  unit:'C', timezone:'Europe/Rome',                    tzAbbr:'CET', region:'intl', wundergroundSlug:'LIMC' },
+  { name:'Sao Paulo',    slug:'sao-paulo',    station:'SBGR', lat:-23.43,  lon:-46.47,  unit:'C', timezone:'America/Sao_Paulo',              tzAbbr:'BRT', region:'intl', wundergroundSlug:'SBGR' },
+  { name:'Paris',        slug:'paris',        station:'LFPG', lat:49.01,   lon:2.55,    unit:'C', timezone:'Europe/Paris',                   tzAbbr:'CET', region:'intl', wundergroundSlug:'LFPG' },
+];
+
+export function getCityBySlug(slug: string): City | undefined {
+  return CITIES.find(c => c.slug === slug);
+}
+
+export function getLocalTime(timezone: string, abbr: string): string {
+  const now = new Date();
+  const time = now.toLocaleTimeString('en-US', { timeZone: timezone, hour: 'numeric', minute: '2-digit', hour12: true });
+  return time + ' ' + abbr;
+}
+
+export function cToF(c: number): number { return Math.round(c * 9 / 5 + 32); }
+export function fToC(f: number): number { return (f - 32) * 5 / 9; }
