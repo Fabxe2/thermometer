@@ -35,19 +35,32 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
   const safeCity = city!;
   const unit = safeCity.unit;
 
-  const weatherData = await fetchWeatherData(safeCity);
+  // FIX #5: fetchWeatherData y fetchPolymarketData en paralelo
+  const [weatherData, polyData] = await Promise.all([
+    fetchWeatherData(safeCity),
+    // Polymarket no necesita la temp actual para la busqueda inicial
+    fetchPolymarketData(safeCity, 0),
+  ]);
+
   const currentTempDisplay = weatherData.current != null
     ? (weatherData.current.tempDisplay ?? toDisplay(weatherData.current.tempC, unit))
     : null;
 
-  const polyData = await fetchPolymarketData(safeCity, currentTempDisplay ?? 0);
   const current = weatherData.current;
   const forecast = weatherData.forecast;
   const time = getLocalTime(safeCity.timezone, safeCity.tzAbbr);
   const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: safeCity.timezone });
 
+  // FIX #2: hora actual de la CIUDAD para la linea "now" del grafico
+  const cityHour = parseInt(
+    new Date().toLocaleTimeString('en-US', { timeZone: safeCity.timezone, hour: '2-digit', hour12: false }),
+    10
+  ) % 24;
+
+  // FIX #3: filtrar forecastHourly por fecha de hoy (evita horas de manana con WU)
   const fcastMap = new Map<number, number>();
   for (const pt of weatherData.forecastHourly) {
+    if (getDate(pt.time) !== todayStr) continue; // <- filtro de fecha
     const h = getHour(pt.time);
     if (h < 0) continue;
     if (!fcastMap.has(h)) fcastMap.set(h, toDisplay(pt.tempC, unit));
@@ -76,7 +89,6 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
 
   return (
     <main style={{ maxWidth:720, margin:"0 auto", padding:"32px 24px", minHeight:"100vh" }}>
-
       <Link href="/" style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.1em", color:"rgba(255,255,255,0.3)", textDecoration:"none" }}>
         ← All Cities
       </Link>
@@ -89,12 +101,10 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
           <span style={{ fontSize:13, fontFamily:"monospace", color:"rgba(255,255,255,0.3)" }}>{safeCity.station}</span>
           <span style={{ fontSize:13, fontFamily:"monospace", color:"rgba(255,255,255,0.3)" }}>{time}</span>
         </div>
-
         <div style={{ fontFamily:"monospace", fontSize:"clamp(64px,9vw,88px)", lineHeight:1, fontWeight:300, color:"#fff", marginTop:12 }}>
           {currentTempDisplay != null ? currentTempDisplay : "—"}
           <span style={{ fontSize:"clamp(28px,4vw,42px)", color:"rgba(255,255,255,0.5)" }}>°{unit}</span>
         </div>
-
         {current && (
           <div style={{ display:"flex", alignItems:"center", gap:16, marginTop:6 }}>
             <span style={{ fontSize:11, fontFamily:"monospace", color:"rgba(255,255,255,0.3)" }}>
@@ -114,17 +124,11 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
           <h2 style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"rgba(255,255,255,0.3)", fontWeight:400, margin:0 }}>
             Temperature
           </h2>
-          <span style={{ fontSize:10, fontFamily:"monospace", color:"rgba(255,255,255,0.7)" }}>
-            — obs
-          </span>
-          <span style={{ fontSize:10, fontFamily:"monospace", color:"rgba(255,255,255,0.35)", letterSpacing:2 }}>
-            - - forecast
-          </span>
-          <span style={{ fontSize:10, fontFamily:"monospace", color:"rgba(255,255,255,0.2)" }}>
-            hover para ver valores
-          </span>
+          <span style={{ fontSize:10, fontFamily:"monospace", color:"rgba(255,255,255,0.7)" }}>— obs</span>
+          <span style={{ fontSize:10, fontFamily:"monospace", color:"rgba(255,255,255,0.35)", letterSpacing:2 }}>- - forecast</span>
+          <span style={{ fontSize:10, fontFamily:"monospace", color:"rgba(255,255,255,0.2)" }}>hover para ver valores</span>
         </div>
-        <Sparkline data={chartData} height={300} unit={unit} />
+        <Sparkline data={chartData} height={300} unit={unit} cityHour={cityHour} />
       </div>
 
       <div style={{ marginBottom:40, minHeight:200 }}>
@@ -135,15 +139,11 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
         <div style={{ paddingTop:24, display:"flex", gap:32, borderTop:"1px solid rgba(255,255,255,0.08)", flexWrap:"wrap" }}>
           <div>
             <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"rgba(255,255,255,0.3)", marginBottom:4 }}>Today High</div>
-            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"#fff" }}>
-              {Math.round(forecast.maxDisplay)}°{unit}
-            </div>
+            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"#fff" }}>{Math.round(forecast.maxDisplay)}°{unit}</div>
           </div>
           <div>
             <div style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.15em", color:"rgba(255,255,255,0.3)", marginBottom:4 }}>Today Low</div>
-            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"#fff" }}>
-              {Math.round(forecast.minDisplay)}°{unit}
-            </div>
+            <div style={{ fontFamily:"monospace", fontSize:28, fontWeight:300, color:"#fff" }}>{Math.round(forecast.minDisplay)}°{unit}</div>
           </div>
           {current?.rawMetar && (
             <div style={{ flex:1, minWidth:0 }}>
