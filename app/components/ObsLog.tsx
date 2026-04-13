@@ -8,6 +8,7 @@ if(currentTemp!==null&&currentTime)es.push({time:currentTime,tempC:currentTemp,l
 for(const pt of[...obsHourly].reverse()){try{
 const iso=pt.time.includes('Z')||pt.time.includes('+')?pt.time:pt.time+'Z';
 const t=new Date(iso).toLocaleTimeString('en-US',{timeZone:timezone,hour:'numeric',minute:'2-digit',hour12:true});
+if(t===currentTime)continue;
 es.push({time:t,tempC:pt.tempC,live:false});}catch{}}
 if(!es.length)return null;
 const all=es.map(e=>toD(e.tempC,unit));
