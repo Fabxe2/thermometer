@@ -100,7 +100,7 @@ async function fetchPWSHistory(pwsId: string, unit: "F"|"C"): Promise<HourlyPoin
 async function fetchMetarHistory(station: string, timezone: string): Promise<HourlyPoint[]> {
   try {
     const res = await fetch(
-      `https://aviationweather.gov/api/data/metar?ids=${station}&format=json&hours=26`,
+      `https://aviationweather.gov/api/data/metar?ids=${station}&format=json&hours=48`,
       { cache: 'no-store' }
     );
     if (!res.ok) return [];
