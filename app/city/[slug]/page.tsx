@@ -5,6 +5,7 @@ import { fetchWeatherData } from "@/lib/weather";
 import { fetchPolymarketData } from "@/lib/polymarket";
 import Sparkline, { ChartPoint } from "../../components/Sparkline";
 import MarketChart from "../../components/MarketChart";
+import AutoRefresh from "../../components/AutoRefresh";
 import ObsLog from "../../components/ObsLog";
 
 export const dynamic = "force-dynamic";
@@ -90,6 +91,7 @@ export default async function CityPage({ params }: { params: Promise<{ slug: str
 
   return (
     <main style={{ maxWidth:720, margin:"0 auto", padding:"32px 24px", minHeight:"100vh" }}>
+      <AutoRefresh />
       <Link href="/" style={{ fontSize:11, textTransform:"uppercase", letterSpacing:"0.1em", color:"rgba(255,255,255,0.3)", textDecoration:"none" }}>
         ← All Cities
       </Link>
