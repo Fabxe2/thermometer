@@ -88,5 +88,14 @@ export async function fetchWeatherData(city: City): Promise<WeatherData> {
     return { current: applyUnit(metarObs, city), obsHourly, forecastHourly, forecast };
   }
   const omC = await fetchOMCurrent(city);
+  // Recalcular max/min del dia desde forecast calibrado
+  if (forecastHourly.length > 0) {
+    const ftemps = forecastHourly.map(p => p.tempC);
+    const fmaxC = Math.max(...ftemps);
+    const fminC = Math.min(...ftemps);
+    const calibDay = applyForecastUnit({ maxC: fmaxC, minC: fminC, maxDisplay: 0, minDisplay: 0 }, city);
+    if (metarObs) return { current: applyUnit(metarObs, city), obsHourly, forecastHourly, forecast: calibDay };
+    return { current: omC ? applyUnit(omC, city) : null, obsHourly, forecastHourly, forecast: calibDay };
+  }
   return { current: omC ? applyUnit(omC, city) : null, obsHourly, forecastHourly, forecast };
 }
