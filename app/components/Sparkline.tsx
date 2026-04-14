@@ -75,7 +75,7 @@ export default function Sparkline({ data, height = 300, unit = "C", cityHour }: 
         <Line type="monotone" dataKey="forecast" stroke="rgba(255,255,255,0.4)" strokeWidth={1.5}
           strokeDasharray="5 4" dot={false} activeDot={{r:4, fill:"rgba(255,255,255,0.6)", stroke:"none"}}
           connectNulls isAnimationActive={false} />
-        <Line type="monotone" dataKey="observed" stroke="#ffffff" strokeWidth={2.5}
+        <Line type="linear" dataKey="observed" stroke="#ffffff" strokeWidth={2.5}
           dot={false} activeDot={{r:5, fill:"#ffffff", stroke:"rgba(255,255,255,0.3)", strokeWidth:3}}
           connectNulls isAnimationActive={false} />
       </ComposedChart>
