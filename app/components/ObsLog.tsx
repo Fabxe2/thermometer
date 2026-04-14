@@ -6,8 +6,12 @@ export default function ObsLog({obsHourly,unit,timezone,currentTemp,currentTime}
 type E={time:string;tempC:number;live:boolean};const es:E[]=[];
 if(currentTemp!==null&&currentTime)es.push({time:currentTime,tempC:currentTemp,live:true});
 for(const pt of[...obsHourly].reverse()){try{
-const iso=pt.time.includes('Z')||pt.time.includes('+')?pt.time:pt.time+'Z';
-const t=new Date(iso).toLocaleTimeString('en-US',{timeZone:timezone,hour:'numeric',minute:'2-digit',hour12:true});
+// pt.time ya es hora local "YYYY-MM-DDTHH:MM:00" — parsear directo sin conversion
+const timePart=(pt.time.split('T')[1]??'').slice(0,5);
+const [hStr,mStr]=timePart.split(':');
+const h=parseInt(hStr,10);const m=mStr??'00';
+const ampm=h>=12?'PM':'AM';const h12=h%12||12;
+const t=h12+':'+m+' '+ampm;
 if(t===currentTime)continue;
 es.push({time:t,tempC:pt.tempC,live:false});}catch{}}
 if(!es.length)return null;
