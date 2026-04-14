@@ -2,6 +2,7 @@ import { CITIES, getLocalTime } from "../lib/cities";
 import { fetchWeatherData } from "../lib/weather";
 import { fetchPolymarketData } from "../lib/polymarket";
 
+import AutoRefresh from "../components/AutoRefresh";
 export const dynamic = "force-dynamic";
 
 async function CityRow({ city }: { city: typeof CITIES[0] }) {
@@ -46,6 +47,7 @@ export default function Home() {
   const intl = CITIES.filter(c => c.region === 'intl');
   return (
     <main style={{ maxWidth:720, margin:"0 auto", padding:"32px 24px 64px" }}>
+      <AutoRefresh />
       <div style={{ marginBottom:40 }}>
         <h1 style={{ fontSize:18, fontWeight:400, letterSpacing:"0.02em", color:"var(--color-text-primary)" }}>thermometer</h1>
       </div>
