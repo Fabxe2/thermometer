@@ -11,6 +11,7 @@ export const CITIES: City[] = [
   { name:'Miami',        slug:'miami',        station:'KMIA', lat:25.79,   lon:-80.29,  unit:'F', timezone:'America/New_York',               tzAbbr:'ET',  region:'us',   pwsId:'KFLMIAMI1030', wundergroundSlug:'KMIA' },
   { name:'Seattle',      slug:'seattle',      station:'KSEA', lat:47.45,   lon:-122.30, unit:'F', timezone:'America/Los_Angeles',            tzAbbr:'PT',  region:'us',   pwsId:'T00060006',    wundergroundSlug:'KSEA' },
   { name:'Atlanta',      slug:'atlanta',      station:'KATL', lat:33.63,   lon:-84.43,  unit:'F', timezone:'America/New_York',               tzAbbr:'ET',  region:'us',   pwsId:'KGAATLAN557',  wundergroundSlug:'KATL' },
+  { name:'San Francisco', slug:'san-francisco', station:'KSFO', lat:37.62, lon:-122.38, unit:'F', timezone:'America/Los_Angeles', tzAbbr:'PT', region:'us', wundergroundSlug:'KSFO' },
   { name:'London',       slug:'london',       station:'EGLC', lat:51.51,   lon:0.05,    unit:'C', timezone:'Europe/London',                  tzAbbr:'GMT', region:'intl', pwsId:'ILONDON828',   wundergroundSlug:'EGLC' },
   { name:'Toronto',      slug:'toronto',      station:'CYYZ', lat:43.68,   lon:-79.63,  unit:'C', timezone:'America/Toronto',                tzAbbr:'ET',  region:'intl', pwsId:'IONTARIO1108', wundergroundSlug:'CYYZ' },
   { name:'Buenos Aires', slug:'buenos-aires', station:'SAEZ', lat:-34.82,  lon:-58.53,  unit:'C', timezone:'America/Argentina/Buenos_Aires', tzAbbr:'ART', region:'intl', wundergroundSlug:'SAEZ' },
