@@ -12,9 +12,7 @@ async function CityRow({ city }: { city: typeof CITIES[0] }) {
     const w = await fetchWeatherData(city);
     tempDisplay = w.current?.tempDisplay ?? null;
     if (w.forecast) {
-      const hi = Math.round(w.forecast.maxDisplay);
-      const lo = Math.round(w.forecast.minDisplay);
-      maxDisplay = hi === lo ? hi + "°" + city.unit : hi + "-" + (hi+1) + "°" + city.unit;
+      maxDisplay = Math.round(w.forecast.maxDisplay) + "°" + city.unit;
     }
     if (tempDisplay !== null) {
       const poly = await fetchPolymarketData(city, tempDisplay);
