@@ -34,7 +34,7 @@ async function CityRow({ city }: { city: typeof CITIES[0] }) {
       <span style={{ fontSize:13, fontFamily:"monospace", color:"var(--color-text-tertiary)" }}>{maxDisplay}</span>
       {topPrice !== null && <span style={{ fontSize:12, fontFamily:"monospace", color:"var(--color-accent)", fontWeight:500 }}>{topPrice}c</span>}
       {topPrice === null && <span />}
-      <span style={{ fontSize:22, fontFamily:"monospace", fontWeight:300, color:"var(--color-data)", minWidth:52, textAlign:"right" }}>
+      <span style={{ fontSize:22, fontFamily:"monospace", fontWeight:300, color:"#e8b86d", minWidth:52, textAlign:"right" }}>
         {tempDisplay !== null ? tempDisplay + "°" + city.unit : "--"}
       </span>
     </a>
