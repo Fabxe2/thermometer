@@ -19,6 +19,47 @@ async function fetchOMFallback(city: City): Promise<{ all: HourlyPoint[]; day: F
 async function fetchOMCurrent(city: City): Promise<WeatherObs|null> { try { const json = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}&current=temperature_2m,wind_speed_10m,wind_direction_10m&timezone=auto`,{ cache: 'no-store' }).then(r => r.json()); const tempC: number = json.current.temperature_2m, now = new Date(); return { tempC, tempDisplay: tempC, unit: 'C', station: city.station, observedAt: now.toLocaleTimeString('en-US', { timeZone: city.timezone, hour: 'numeric', minute: '2-digit', hour12: true }), observedISO: now.toISOString(), windSpeed: json.current.wind_speed_10m ?? null, windDir: json.current.wind_direction_10m ?? null, cloudCover: null, pressure: null, dewpoint: null, rawMetar: null, source: 'open-meteo' }; } catch { return null; } }
 function applyUnit(obs: WeatherObs, city: City): WeatherObs { obs.tempDisplay = city.unit === 'F' ? cToF(obs.tempC) : Math.round(obs.tempC); obs.unit = city.unit; return obs; }
 function applyForecastUnit(f: ForecastDay, city: City): ForecastDay { f.maxDisplay = city.unit === 'F' ? cToF(f.maxC) : Math.round(f.maxC); f.minDisplay = city.unit === 'F' ? cToF(f.minC) : Math.round(f.minC); return f; }
+
+// ── Calibración en tiempo real con METARs ─────────────────────────────────────
+// Calcula el bias promedio (METAR_real - modelo) de los ultimos METARs
+// y lo aplica a las horas futuras con decay lineal de 12h.
+// Cuanto mas avanza el dia y mas METARs llegan, mas preciso se vuelve el forecast.
+function calibrateForecast(
+  metarHistory: HourlyPoint[],
+  blendedForecast: HourlyPoint[],
+  currentH: number
+): HourlyPoint[] {
+  if (!metarHistory.length) return blendedForecast;
+
+  // Mapa del modelo por hora local
+  const modelMap = new Map<number, number>();
+  for (const pt of blendedForecast) modelMap.set(localHour(pt.time), pt.tempC);
+
+  // Bias = diferencia entre METAR real y lo que predijo el modelo para esa hora
+  const biases: number[] = [];
+  for (const obs of metarHistory) {
+    const h = localHour(obs.time);
+    if (h <= currentH && modelMap.has(h)) {
+      biases.push(obs.tempC - modelMap.get(h)!);
+    }
+  }
+  if (!biases.length) return blendedForecast;
+
+  // Promedio de los ultimos 3 METARs (mas recientes = mas representativos)
+  const recent = biases.slice(-3);
+  const avgBias = recent.reduce((a, b) => a + b, 0) / recent.length;
+
+  // Aplicar bias con decay a horas futuras
+  return blendedForecast.map(pt => {
+    const h = localHour(pt.time);
+    if (h <= currentH) return pt; // horas pasadas no se tocan
+    const hoursAhead = h > currentH ? h - currentH : h + 24 - currentH;
+    const decay = Math.max(0, 1 - hoursAhead / 12); // decay lineal: 100% en h+1, 0% en h+12
+    const correction = avgBias * decay;
+    return { time: pt.time, tempC: Math.round((pt.tempC + correction) * 10) / 10 };
+  });
+}
+
 export async function fetchWeatherData(city: City): Promise<WeatherData> {
   const currentH = nowLocalH(city.timezone);
   const isUS = city.region === 'us';
@@ -39,8 +80,9 @@ export async function fetchWeatherData(city: City): Promise<WeatherData> {
     ? metarHistory.filter(p => localHour(p.time) <= currentH)
     : [];
 
-  // FORECAST: PWS (60%) + modelo (40%) para horas pasadas, modelo puro para futuras
-  const forecastHourly = blendForecast(pwsObs, modelAll, currentH);
+  // FORECAST: blend PWS+modelo -> calibracion METAR en tiempo real
+  const blended = blendForecast(pwsObs, modelAll, currentH);
+  const forecastHourly = calibrateForecast(metarHistory, blended, currentH);
 
   if (metarObs) {
     return { current: applyUnit(metarObs, city), obsHourly, forecastHourly, forecast };
