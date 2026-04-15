@@ -1,101 +1,37 @@
-import { City, cToF } from "./cities";
-export type WeatherObs = { tempC: number; tempDisplay: number; unit: "F"|"C"; station: string; observedAt: string; observedISO: string; windSpeed: number|null; windDir: number|null; cloudCover: string|null; pressure: number|null; dewpoint: number|null; rawMetar: string|null; source: string; };
-export type HourlyPoint = { time: string; tempC: number; };
-export type ForecastDay  = { maxC: number; minC: number; maxDisplay: number; minDisplay: number; };
-export type WeatherData  = { current: WeatherObs|null; obsHourly: HourlyPoint[]; forecastHourly: HourlyPoint[]; forecast: ForecastDay|null; };
-const WU_KEY = process.env.WU_API_KEY || '';
-function parseTempFromMetar(metar: string): number | null { const tg = metar.match(/\bT([01])(\d{3})[01]\d{3}\b/); if (tg) { const s = tg[1]==='1'?-1:1; return s*parseInt(tg[2],10)/10; } const m = metar.match(/\b(M?\d{2})\/M?\d{2}\b/); if (!m) return null; return m[1].startsWith('M') ? -parseInt(m[1].slice(1),10) : parseInt(m[1],10); }
-function parseWindFromMetar(metar: string) { const m = metar.match(/(\d{3})(\d{2,3})KT/); return m ? { dir:parseInt(m[1],10), speed:parseInt(m[2],10) } : { dir:null, speed:null }; }
-function parsePressureFromMetar(metar: string): number|null { const q = metar.match(/Q(\d{4})/); if (q) return parseInt(q[1],10); const a = metar.match(/A(\d{4})/); if (a) return Math.round(parseInt(a[1],10)*0.03386); return null; }
-function parseCloudFromMetar(metar: string): string|null { return metar.match(/(CLR|SKC|CAVOK|FEW|SCT|BKN|OVC)/)?.[1]??null; }
-function nowLocalH(timezone: string): number { const s = new Date().toLocaleTimeString('en-US', { timeZone: timezone, hour: '2-digit', hour12: false }); return parseInt(s, 10) % 24; }
-function localHour(t: string): number { const m = t.match(/T(\d{2}):/); return m ? parseInt(m[1], 10) : 0; }
-async function fetchTgftpMetar(station: string, timezone: string): Promise<WeatherObs|null> { try { const res = await fetch(`https://tgftp.nws.noaa.gov/data/observations/metar/stations/${station}.TXT`,{ cache: 'no-store' }); if (!res.ok) return null; const lines = (await res.text()).trim().split('\n'); const rawMetar = lines[1]?.trim()??lines[0]?.trim()??''; if (!rawMetar) return null; const tempC = parseTempFromMetar(rawMetar); if (tempC==null) return null; const {speed,dir} = parseWindFromMetar(rawMetar); const tm = rawMetar.match(/\b(\d{2})(\d{2})(\d{2})Z\b/); let observedAt='', observedISO=new Date().toISOString(); if (tm) { const now=new Date(); const obs=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),parseInt(tm[1],10),parseInt(tm[2],10),parseInt(tm[3],10))); observedISO=obs.toISOString(); observedAt=obs.toLocaleTimeString('en-US',{timeZone:timezone,hour:'numeric',minute:'2-digit',hour12:true}); } return { tempC, tempDisplay:tempC, unit:'C', station, observedAt, observedISO, windSpeed:speed, windDir:dir, cloudCover:parseCloudFromMetar(rawMetar), pressure:parsePressureFromMetar(rawMetar), dewpoint:null, rawMetar, source:'tgftp' }; } catch { return null; } }
-async function fetchPWSHistory(pwsId: string, unit: "F"|"C"): Promise<HourlyPoint[]> { if (!WU_KEY || !pwsId) return []; try { const today = new Date().toISOString().split('T')[0].replace(/-/g, ''); const units = unit === 'F' ? 'e' : 'm'; const json = await fetch(`https://api.weather.com/v2/pws/history/hourly?stationId=${pwsId}&format=json&units=${units}&date=${today}&apiKey=${WU_KEY}`,{ cache: 'no-store' }).then(r => { if (!r.ok) throw new Error(`PWS ${r.status}`); return r.json(); }); return (json.observations ?? []).map((o: { obsTimeLocal: string; imperial?: { tempAvg: number }; metric?: { tempAvg: number }; }) => { const tempRaw = unit === 'F' ? (o.imperial?.tempAvg ?? 0) : (o.metric?.tempAvg ?? 0); const tempC = unit === 'F' ? (tempRaw - 32) * 5 / 9 : tempRaw; return { time: o.obsTimeLocal.replace(' ', 'T'), tempC }; }); } catch { return []; } }
-async function fetchMetarHistory(station: string, timezone: string): Promise<HourlyPoint[]> { try { const res = await fetch(`https://aviationweather.gov/api/data/metar?ids=${station}&format=json&hours=48`,{ cache: 'no-store' }); if (!res.ok) return []; const data: Record<string, unknown>[] = await res.json(); if (!data?.length) return []; const now = new Date(); const todayStr = now.toLocaleDateString('en-CA', { timeZone: timezone }); return data.filter(m => m.temp != null).map(m => { const obsUTC = new Date(String(m.reportTime ?? m.obsTime ?? '')); const localDateStr = obsUTC.toLocaleDateString('en-CA', { timeZone: timezone }); const localTimeStr = obsUTC.toLocaleTimeString('en-US', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hour12: false }); const [hStr, mStr] = localTimeStr.split(':'); const h = parseInt(hStr, 10) % 24; const min = parseInt(mStr, 10); return { localDateStr, time: localDateStr + 'T' + String(h).padStart(2,'0') + ':' + String(min).padStart(2,'0') + ':00', tempC: Number(m.temp), obsUTC }; }).filter(p => p.localDateStr === todayStr && p.obsUTC <= now).sort((a,b) => a.obsUTC.getTime()-b.obsUTC.getTime()).map(({ time, tempC }) => ({ time, tempC })); } catch { return []; } }
-function blendForecast(pwsObs: HourlyPoint[], modelForecast: HourlyPoint[], currentH: number): HourlyPoint[] { if (!pwsObs.length) return modelForecast; const pwsMap = new Map<number, number>(); for (const p of pwsObs) pwsMap.set(localHour(p.time), p.tempC); return modelForecast.map(pt => { const h = localHour(pt.time); if (h <= currentH && pwsMap.has(h)) { const pwsTemp = pwsMap.get(h)!; return { time: pt.time, tempC: Math.round((pwsTemp * 0.6 + pt.tempC * 0.4) * 10) / 10 }; } return pt; }); }
-async function fetchWUForecast(city: City): Promise<{ all: HourlyPoint[]; day: ForecastDay | null }> { if (!WU_KEY) return fetchOMFallback(city); try { const units = city.unit === 'F' ? 'e' : 'm'; const json = await fetch(`https://api.weather.com/v3/wx/forecast/hourly/1day?geocode=${city.lat},${city.lon}&units=${units}&language=en-US&format=json&apiKey=${WU_KEY}`,{ cache: 'no-store' }).then(r => { if (!r.ok) throw new Error(`WUF ${r.status}`); return r.json(); }); const times: string[] = json.validTimeLocal ?? []; const temps: number[] = json.temperature ?? []; if (!times.length) return fetchOMFallback(city); const toC = (t: number) => city.unit === 'F' ? (t - 32) * 5 / 9 : t; const all = times.map((t, i) => ({ time: t.replace(/[+-]\d{4}$/, '').replace(/Z$/, ''), tempC: toC(temps[i]) })); const allC = all.map(p => p.tempC); return { all, day: { maxC: Math.max(...allC), minC: Math.min(...allC), maxDisplay: 0, minDisplay: 0 } }; } catch { return fetchOMFallback(city); } }
-async function fetchOMFallback(city: City): Promise<{ all: HourlyPoint[]; day: ForecastDay | null }> { try { const json = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}&hourly=temperature_2m&daily=temperature_2m_max,temperature_2m_min&timezone=${encodeURIComponent(city.timezone)}&forecast_days=2`,{ cache: 'no-store' }).then(r => r.json()); const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: city.timezone }); const all = (json.hourly.time as string[]).map((t, i) => ({ time: t, tempC: json.hourly.temperature_2m[i] })).filter(p => p.time.startsWith(todayStr)); const maxC = json.daily?.temperature_2m_max?.[0] ?? (all.length ? Math.max(...all.map(p=>p.tempC)) : 0); const minC = json.daily?.temperature_2m_min?.[0] ?? (all.length ? Math.min(...all.map(p=>p.tempC)) : 0); return { all, day: { maxC, minC, maxDisplay: 0, minDisplay: 0 } }; } catch { return { all: [], day: null }; } }
-async function fetchOMCurrent(city: City): Promise<WeatherObs|null> { try { const json = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}&current=temperature_2m,wind_speed_10m,wind_direction_10m&timezone=auto`,{ cache: 'no-store' }).then(r => r.json()); const tempC: number = json.current.temperature_2m, now = new Date(); return { tempC, tempDisplay: tempC, unit: 'C', station: city.station, observedAt: now.toLocaleTimeString('en-US', { timeZone: city.timezone, hour: 'numeric', minute: '2-digit', hour12: true }), observedISO: now.toISOString(), windSpeed: json.current.wind_speed_10m ?? null, windDir: json.current.wind_direction_10m ?? null, cloudCover: null, pressure: null, dewpoint: null, rawMetar: null, source: 'open-meteo' }; } catch { return null; } }
-function applyUnit(obs: WeatherObs, city: City): WeatherObs { obs.tempDisplay = city.unit === 'F' ? cToF(obs.tempC) : Math.round(obs.tempC); obs.unit = city.unit; return obs; }
-function applyForecastUnit(f: ForecastDay, city: City): ForecastDay { f.maxDisplay = city.unit === 'F' ? cToF(f.maxC) : Math.round(f.maxC); f.minDisplay = city.unit === 'F' ? cToF(f.minC) : Math.round(f.minC); return f; }
-
-// ── Calibración en tiempo real con METARs ─────────────────────────────────────
-// Calcula el bias promedio (METAR_real - modelo) de los ultimos METARs
-// y lo aplica a las horas futuras con decay lineal de 12h.
-// Cuanto mas avanza el dia y mas METARs llegan, mas preciso se vuelve el forecast.
-function calibrateForecast(
-  metarHistory: HourlyPoint[],
-  blendedForecast: HourlyPoint[],
-  currentH: number
-): HourlyPoint[] {
-  if (!metarHistory.length) return blendedForecast;
-
-  // Mapa del modelo por hora local
-  const modelMap = new Map<number, number>();
-  for (const pt of blendedForecast) modelMap.set(localHour(pt.time), pt.tempC);
-
-  // Bias = diferencia entre METAR real y lo que predijo el modelo para esa hora
-  const biases: number[] = [];
-  for (const obs of metarHistory) {
-    const h = localHour(obs.time);
-    if (h <= currentH && modelMap.has(h)) {
-      biases.push(obs.tempC - modelMap.get(h)!);
-    }
-  }
-  if (!biases.length) return blendedForecast;
-
-  // Promedio de los ultimos 3 METARs (mas recientes = mas representativos)
-  const recent = biases.slice(-3);
-  const avgBias = recent.reduce((a, b) => a + b, 0) / recent.length;
-
-  // Aplicar bias con decay a horas futuras
-  return blendedForecast.map(pt => {
-    const h = localHour(pt.time);
-    if (h <= currentH) return pt; // horas pasadas no se tocan
-    const hoursAhead = h > currentH ? h - currentH : h + 24 - currentH;
-    const decay = Math.max(0, 1 - hoursAhead / 12); // decay lineal: 100% en h+1, 0% en h+12
-    const correction = avgBias * decay;
-    return { time: pt.time, tempC: Math.round((pt.tempC + correction) * 10) / 10 };
-  });
-}
-
-export async function fetchWeatherData(city: City): Promise<WeatherData> {
-  const currentH = nowLocalH(city.timezone);
-  const isUS = city.region === 'us';
-
-  // FIX: fetchMetarHistory para TODAS las ciudades (antes solo intl)
-  const [metarObs, pwsObs, metarHistory, forecastResult] = await Promise.all([
-    fetchTgftpMetar(city.station, city.timezone),
-    city.pwsId ? fetchPWSHistory(city.pwsId, city.unit) : Promise.resolve([]),
-    fetchMetarHistory(city.station, city.timezone),
-    isUS ? fetchWUForecast(city) : fetchOMFallback(city),
-  ]);
-
-  const forecast = forecastResult.day ? applyForecastUnit(forecastResult.day, city) : null;
-  const modelAll: HourlyPoint[] = forecastResult.all ?? [];
-
-  // OBS: solo METARs reales — sin excepcion, sin PWS
-  const obsHourly: HourlyPoint[] = metarHistory.length > 0
-    ? metarHistory.filter(p => localHour(p.time) <= currentH)
-    : [];
-
-  // FORECAST: blend PWS+modelo -> calibracion METAR en tiempo real
-  const blended = blendForecast(pwsObs, modelAll, currentH);
-  const forecastHourly = calibrateForecast(metarHistory, blended, currentH);
-
-  if (metarObs) {
-    return { current: applyUnit(metarObs, city), obsHourly, forecastHourly, forecast };
-  }
-  const omC = await fetchOMCurrent(city);
-  // Recalcular max/min del dia desde forecast calibrado
-  if (forecastHourly.length > 0) {
-    const ftemps = forecastHourly.map(p => p.tempC);
-    const fmaxC = Math.max(...ftemps);
-    const fminC = Math.min(...ftemps);
-    const calibDay = applyForecastUnit({ maxC: fmaxC, minC: fminC, maxDisplay: 0, minDisplay: 0 }, city);
-    if (metarObs) return { current: applyUnit(metarObs, city), obsHourly, forecastHourly, forecast: calibDay };
-    return { current: omC ? applyUnit(omC, city) : null, obsHourly, forecastHourly, forecast: calibDay };
-  }
-  return { current: omC ? applyUnit(omC, city) : null, obsHourly, forecastHourly, forecast };
-}
+import{City,cToF}from"./cities";import{unstable_cache}from'next/cache';
+export type WeatherObs={tempC:number;tempDisplay:number;unit:"F"|"C";station:string;observedAt:string;observedISO:string;windSpeed:number|null;windDir:number|null;cloudCover:string|null;pressure:number|null;dewpoint:number|null;rawMetar:string|null;source:string;};
+export type HourlyPoint={time:string;tempC:number;};
+export type ForecastDay={maxC:number;minC:number;maxDisplay:number;minDisplay:number;};
+export type WeatherData={current:WeatherObs|null;obsHourly:HourlyPoint[];forecastHourly:HourlyPoint[];forecast:ForecastDay|null;};
+const WU_KEY=process.env.WU_API_KEY||'';
+function parseTempFromMetar(m:string):number|null{const tg=m.match(/\bT([01])(\d{3})[01]\d{3}\b/);if(tg){const s=tg[1]==='1'?-1:1;return s*parseInt(tg[2],10)/10;}const r=m.match(/\b(M?\d{2})\/M?\d{2}\b/);if(!r)return null;return r[1].startsWith('M')?-parseInt(r[1].slice(1),10):parseInt(r[1],10);}
+function parseWindFromMetar(m:string){const r=m.match(/(\d{3})(\d{2,3})KT/);return r?{dir:parseInt(r[1],10),speed:parseInt(r[2],10)}:{dir:null,speed:null};}
+function parsePressureFromMetar(m:string):number|null{const q=m.match(/Q(\d{4})/);if(q)return parseInt(q[1],10);const a=m.match(/A(\d{4})/);if(a)return Math.round(parseInt(a[1],10)*0.03386);return null;}
+function parseCloudFromMetar(m:string):string|null{return m.match(/(CLR|SKC|CAVOK|FEW|SCT|BKN|OVC)/)?.[1]??null;}
+function nowLocalH(tz:string):number{const s=new Date().toLocaleTimeString('en-US',{timeZone:tz,hour:'2-digit',hour12:false});return parseInt(s,10)%24;}
+function localHour(t:string):number{const m=t.match(/T(\d{2}):/);return m?parseInt(m[1],10):0;}
+function validTemp(c:number):boolean{return c>-60&&c<60;}
+async function fetchTgftpMetar(station:string,timezone:string):Promise<WeatherObs|null>{try{const res=await fetch(`https://tgftp.nws.noaa.gov/data/observations/metar/stations/${station}.TXT`,{cache:'no-store'});if(!res.ok)return null;const lines=(await res.text()).trim().split('\n');const raw=lines[1]?.trim()??lines[0]?.trim()??'';if(!raw)return null;const tempC=parseTempFromMetar(raw);if(tempC==null||!validTemp(tempC))return null;const{speed,dir}=parseWindFromMetar(raw);const tm=raw.match(/\b(\d{2})(\d{2})(\d{2})Z\b/);let observedAt='',observedISO=new Date().toISOString();if(tm){const now=new Date();const obs=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),parseInt(tm[1],10),parseInt(tm[2],10),parseInt(tm[3],10)));observedISO=obs.toISOString();observedAt=obs.toLocaleTimeString('en-US',{timeZone:timezone,hour:'numeric',minute:'2-digit',hour12:true});}return{tempC,tempDisplay:tempC,unit:'C',station,observedAt,observedISO,windSpeed:speed,windDir:dir,cloudCover:parseCloudFromMetar(raw),pressure:parsePressureFromMetar(raw),dewpoint:null,rawMetar:raw,source:'tgftp'};}catch{return null;}}
+async function _fetchMetarHistory(station:string,timezone:string):Promise<HourlyPoint[]>{try{const res=await fetch(`https://aviationweather.gov/api/data/metar?ids=${station}&format=json&hours=48`,{cache:'no-store'});if(!res.ok)return[];const data:Record<string,unknown>[]=await res.json();if(!data?.length)return[];const now=new Date();const todayStr=now.toLocaleDateString('en-CA',{timeZone:timezone});return data.filter(m=>m.temp!=null&&validTemp(Number(m.temp))).map(m=>{const obsUTC=new Date(String(m.reportTime??m.obsTime??''));const localDateStr=obsUTC.toLocaleDateString('en-CA',{timeZone:timezone});const ts=obsUTC.toLocaleTimeString('en-US',{timeZone:timezone,hour:'2-digit',minute:'2-digit',hour12:false});const[hS,mS]=ts.split(':');const h=parseInt(hS,10)%24;const min=parseInt(mS??'0',10);return{localDateStr,time:localDateStr+'T'+String(h).padStart(2,'0')+':'+String(min).padStart(2,'0')+':00',tempC:Number(m.temp),obsUTC};}).filter(p=>p.localDateStr===todayStr&&p.obsUTC<=now).sort((a,b)=>a.obsUTC.getTime()-b.obsUTC.getTime()).map(({time,tempC})=>({time,tempC}));}catch{return[];}}
+async function _fetchPWSHistory(pwsId:string,unit:"F"|"C"):Promise<HourlyPoint[]>{if(!WU_KEY||!pwsId)return[];try{const today=new Date().toISOString().split('T')[0].replace(/-/g,'');const units=unit==='F'?'e':'m';const json=await fetch(`https://api.weather.com/v2/pws/history/hourly?stationId=${pwsId}&format=json&units=${units}&date=${today}&apiKey=${WU_KEY}`,{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('PWS');return r.json();});return(json.observations??[]).map((o:{obsTimeLocal:string;imperial?:{tempAvg:number};metric?:{tempAvg:number};})=>{const raw=unit==='F'?(o.imperial?.tempAvg??0):(o.metric?.tempAvg??0);const tempC=unit==='F'?(raw-32)*5/9:raw;if(!validTemp(tempC))return null;return{time:o.obsTimeLocal.replace(' ','T'),tempC};}).filter(Boolean)as HourlyPoint[];}catch{return[];}}
+async function _fetchWUForecast(lat:number,lon:number,unit:"F"|"C"):Promise<{all:HourlyPoint[];day:ForecastDay|null}>{if(!WU_KEY)return _fetchOMForecast(lat,lon,'UTC');try{const units=unit==='F'?'e':'m';const json=await fetch(`https://api.weather.com/v3/wx/forecast/hourly/1day?geocode=${lat},${lon}&units=${units}&language=en-US&format=json&apiKey=${WU_KEY}`,{cache:'no-store'}).then(r=>{if(!r.ok)throw new Error('WU');return r.json();});const times:string[]=json.validTimeLocal??[];const temps:number[]=json.temperature??[];if(!times.length)return _fetchOMForecast(lat,lon,'UTC');const toC=(t:number)=>unit==='F'?(t-32)*5/9:t;const all=times.map((t,i)=>({time:t.replace(/[+-]\d{4}$|Z$/,''),tempC:toC(temps[i])})).filter(p=>validTemp(p.tempC));const allC=all.map(p=>p.tempC);return{all,day:allC.length?{maxC:Math.max(...allC),minC:Math.min(...allC),maxDisplay:0,minDisplay:0}:null};}catch{return _fetchOMForecast(lat,lon,'UTC');}}
+async function _fetchOMForecast(lat:number,lon:number,timezone:string):Promise<{all:HourlyPoint[];day:ForecastDay|null}>{try{const json=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&hourly=temperature_2m&daily=temperature_2m_max,temperature_2m_min&timezone=${encodeURIComponent(timezone)}&forecast_days=2`,{cache:'no-store'}).then(r=>r.json());const todayStr=new Date().toLocaleDateString('en-CA',{timeZone:timezone});const all=(json.hourly.time as string[]).map((t,i)=>({time:t,tempC:json.hourly.temperature_2m[i] as number})).filter(p=>p.time.startsWith(todayStr)&&validTemp(p.tempC));const maxC=json.daily?.temperature_2m_max?.[0]??(all.length?Math.max(...all.map(p=>p.tempC)):0);const minC=json.daily?.temperature_2m_min?.[0]??(all.length?Math.min(...all.map(p=>p.tempC)):0);return{all,day:{maxC,minC,maxDisplay:0,minDisplay:0}};}catch{return{all:[],day:null};}}
+async function fetchOMCurrent(city:City):Promise<WeatherObs|null>{try{const json=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}&current=temperature_2m,wind_speed_10m,wind_direction_10m&timezone=auto`,{cache:'no-store'}).then(r=>r.json());const tempC:number=json.current.temperature_2m;if(!validTemp(tempC))return null;const now=new Date();return{tempC,tempDisplay:tempC,unit:'C',station:city.station,observedAt:now.toLocaleTimeString('en-US',{timeZone:city.timezone,hour:'numeric',minute:'2-digit',hour12:true}),observedISO:now.toISOString(),windSpeed:json.current.wind_speed_10m??null,windDir:json.current.wind_direction_10m??null,cloudCover:null,pressure:null,dewpoint:null,rawMetar:null,source:'open-meteo'};}catch{return null;}}
+const fetchMetarHistory=unstable_cache(_fetchMetarHistory,['metar-history'],{revalidate:90});
+const fetchPWSHistory=unstable_cache(_fetchPWSHistory,['pws-history'],{revalidate:180});
+const fetchWUForecast=unstable_cache(_fetchWUForecast,['wu-forecast'],{revalidate:300});
+const fetchOMForecast=unstable_cache(_fetchOMForecast,['om-forecast'],{revalidate:600});
+function blendForecast(pws:HourlyPoint[],model:HourlyPoint[],curH:number):HourlyPoint[]{if(!pws.length)return model;const pm=new Map<number,number>();for(const p of pws)pm.set(localHour(p.time),p.tempC);return model.map(pt=>{const h=localHour(pt.time);if(h<=curH&&pm.has(h)){const pw=pm.get(h)!;return{time:pt.time,tempC:Math.round((pw*0.6+pt.tempC*0.4)*10)/10};}return pt;});}
+function calibrateForecast(metars:HourlyPoint[],blended:HourlyPoint[],curH:number):HourlyPoint[]{if(!metars.length)return blended;const mm=new Map<number,number>();for(const p of blended)mm.set(localHour(p.time),p.tempC);const biases:number[]=[];for(const obs of metars){const h=localHour(obs.time);if(h<=curH&&mm.has(h))biases.push(obs.tempC-mm.get(h)!);}if(!biases.length)return blended;const avg=biases.slice(-3).reduce((a,b)=>a+b,0)/Math.min(biases.length,3);return blended.map(pt=>{const h=localHour(pt.time);if(h<=curH)return pt;const ahead=h>curH?h-curH:h+24-curH;const decay=Math.max(0,1-ahead/12);return{time:pt.time,tempC:Math.round((pt.tempC+avg*decay)*10)/10};});}
+function applyUnit(obs:WeatherObs,city:City):WeatherObs{obs.tempDisplay=city.unit==='F'?cToF(obs.tempC):Math.round(obs.tempC);obs.unit=city.unit;return obs;}
+function applyForecastUnit(f:ForecastDay,city:City):ForecastDay{f.maxDisplay=city.unit==='F'?cToF(f.maxC):Math.round(f.maxC);f.minDisplay=city.unit==='F'?cToF(f.minC):Math.round(f.minC);return f;}
+export async function fetchWeatherData(city:City):Promise<WeatherData>{
+const curH=nowLocalH(city.timezone);const isUS=city.region==='us';
+const[metarObs,pwsObs,metarHistory,forecastResult]=await Promise.all([fetchTgftpMetar(city.station,city.timezone),city.pwsId?fetchPWSHistory(city.pwsId,city.unit):Promise.resolve([]),fetchMetarHistory(city.station,city.timezone),isUS?fetchWUForecast(city.lat,city.lon,city.unit):fetchOMForecast(city.lat,city.lon,city.timezone),]);
+const modelAll:HourlyPoint[]=forecastResult.all??[];
+const obsHourly=metarHistory.filter(p=>localHour(p.time)<=curH);
+const blended=blendForecast(pwsObs,modelAll,curH);
+const forecastHourly=calibrateForecast(metarHistory,blended,curH);
+let forecast:ForecastDay|null=null;if(forecastHourly.length>0){const temps=forecastHourly.map(p=>p.tempC);forecast=applyForecastUnit({maxC:Math.max(...temps),minC:Math.min(...temps),maxDisplay:0,minDisplay:0},city);}else if(forecastResult.day){forecast=applyForecastUnit(forecastResult.day,city);}
+const current=metarObs?applyUnit(metarObs,city):await fetchOMCurrent(city).then(c=>c?applyUnit(c,city):null);
+return{current,obsHourly,forecastHourly,forecast};}
