@@ -22,7 +22,73 @@ async function fetchOMCurrent(city:City):Promise<WeatherObs|null>{try{const json
 
 
 function blendForecast(pws:HourlyPoint[],model:HourlyPoint[],curH:number):HourlyPoint[]{if(!pws.length)return model;const pm=new Map<number,number>();for(const p of pws)pm.set(localHour(p.time),p.tempC);return model.map(pt=>{const h=localHour(pt.time);if(h<=curH&&pm.has(h)){const pw=pm.get(h)!;return{time:pt.time,tempC:Math.round((pw*0.6+pt.tempC*0.4)*10)/10};}return pt;});}
-function calibrateForecast(metars:HourlyPoint[],blended:HourlyPoint[],curH:number):HourlyPoint[]{if(!metars.length)return blended;const mm=new Map<number,number>();for(const p of blended)mm.set(localHour(p.time),p.tempC);const biases:number[]=[];for(const obs of metars){const h=localHour(obs.time);if(h<=curH&&mm.has(h))biases.push(obs.tempC-mm.get(h)!);}if(!biases.length)return blended;const avg=biases.slice(-3).reduce((a,b)=>a+b,0)/Math.min(biases.length,3);return blended.map(pt=>{const h=localHour(pt.time);if(h<=curH)return pt;const ahead=h>curH?h-curH:h+24-curH;const decay=Math.max(0,1-ahead/12);return{time:pt.time,tempC:Math.round((pt.tempC+avg*decay)*10)/10};});}
+function calibrateForecast(metars:HourlyPoint[],blended:HourlyPoint[],curH:number):HourlyPoint[]{
+  if(!metars.length)return blended;
+  const mm=new Map<number,number>();
+  for(const p of blended)mm.set(localHour(p.time),p.tempC);
+
+  // Pares (modelo, observado) para regresion lineal
+  const pairs:{x:number;y:number}[]=[];
+  for(const obs of metars){
+    const h=localHour(obs.time);
+    if(h<=curH&&mm.has(h))pairs.push({x:mm.get(h)!,y:obs.tempC});
+  }
+  if(!pairs.length)return blended;
+
+  // Regresion lineal: observado = a*modelo + b
+  // Con >=3 puntos: escala + offset; con <3: solo offset
+  let a=1,b=0;
+  if(pairs.length>=3){
+    const n=pairs.length;
+    const sx=pairs.reduce((s,p)=>s+p.x,0);
+    const sy=pairs.reduce((s,p)=>s+p.y,0);
+    const sxy=pairs.reduce((s,p)=>s+p.x*p.y,0);
+    const sxx=pairs.reduce((s,p)=>s+p.x*p.x,0);
+    const den=n*sxx-sx*sx;
+    if(Math.abs(den)>0.001){
+      a=Math.max(0.7,Math.min(1.3,(n*sxy-sx*sy)/den));
+      b=(sy-a*sx)/n;
+    }
+  } else {
+    b=pairs.reduce((s,p)=>s+(p.y-p.x),0)/pairs.length;
+  }
+
+  // Tasa de cambio real vs modelo (ultimas 2h) para detectar dias anomalos
+  let rateDelta=0;
+  const sorted=[...metars].sort((x,y)=>localHour(x.time)-localHour(y.time));
+  if(sorted.length>=2){
+    const last=sorted[sorted.length-1];
+    const prev=sorted.slice(0,-1).reverse().find(p=>localHour(p.time)<=localHour(last.time)-1);
+    if(prev){
+      const hd=localHour(last.time)-localHour(prev.time);
+      if(hd>0){
+        const rr=(last.tempC-prev.tempC)/hd;
+        const lh=localHour(last.time),ph=localHour(prev.time);
+        const rm=(mm.has(lh)&&mm.has(ph))?(mm.get(lh)!-mm.get(ph)!)/hd:0;
+        rateDelta=Math.max(-2,Math.min(2,rr-rm));
+      }
+    }
+  }
+
+  // Maximo ya observado hoy (restriccion dura)
+  const maxObs=Math.max(...metars.map(p=>p.tempC));
+
+  return blended.map(pt=>{
+    const h=localHour(pt.time);
+    if(h<=curH)return pt;
+    const ahead=h>curH?h-curH:h+24-curH;
+    // Correccion regresion (decay 12h) + tasa (decay 6h)
+    const dBias=Math.max(0,1-ahead/12);
+    const dRate=Math.max(0,1-ahead/6);
+    const regCorr=(a*pt.tempC+b-pt.tempC)*dBias;
+    const rateCorr=rateDelta*dRate;
+    // Restriccion dura: el maximo del dia no puede bajar de lo ya observado
+    const raw=pt.tempC+regCorr+rateCorr;
+    const final=ahead<=8?Math.max(raw,maxObs):raw;
+    return{time:pt.time,tempC:Math.round(final*10)/10};
+  });
+}
+
 function applyUnit(obs:WeatherObs,city:City):WeatherObs{obs.tempDisplay=city.unit==='F'?cToF(obs.tempC):Math.round(obs.tempC);obs.unit=city.unit;return obs;}
 function applyForecastUnit(f:ForecastDay,city:City):ForecastDay{f.maxDisplay=city.unit==='F'?cToF(f.maxC):Math.round(f.maxC);f.minDisplay=city.unit==='F'?cToF(f.minC):Math.round(f.minC);return f;}
 export async function fetchWeatherData(city:City):Promise<WeatherData>{
