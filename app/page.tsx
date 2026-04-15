@@ -2,7 +2,7 @@ import { CITIES, getLocalTime } from "../lib/cities";
 import { fetchWeatherData } from "../lib/weather";
 import { fetchPolymarketData } from "../lib/polymarket";
 
-import AutoRefresh from "../components/AutoRefresh";
+import AutoRefresh from "./components/AutoRefresh";
 export const dynamic = "force-dynamic";
 
 async function CityRow({ city }: { city: typeof CITIES[0] }) {
